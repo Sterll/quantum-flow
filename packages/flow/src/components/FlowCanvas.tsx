@@ -10,13 +10,14 @@ import { GraphModel } from '../model/GraphModel'
 export interface FlowTheme {
   canvas?: {
     background?: string
-    dotColor?: string
-    dotSpacing?: number
+    gridColor?: string
+    gridMajorColor?: string
+    gridSpacing?: number
+    gridMajorEvery?: number
   }
   node?: {
     background?: string
     border?: string
-    headerTint?: number
     text?: string
     subtext?: string
   }
@@ -32,6 +33,7 @@ export interface FlowTheme {
   connection?: {
     width?: number
     execColor?: string
+    execWidth?: number
   }
 }
 
@@ -51,21 +53,22 @@ export interface FlowCanvasProps {
    Layout
    ──────────────────────────────────────────────── */
 
-const NODE_W = 240
-const HEADER_H = 34
+const NODE_W = 220
+const HEADER_H = 32
 const PIN_ROW = 24
-const PIN_R = 3.5
-const PIN_Y0 = HEADER_H + 16
+const PIN_R = 4
+const PIN_Y0 = HEADER_H + 14
 const PAD_BOTTOM = 14
-const CORNER = 8
-const DOT_SPACING = 20
+const CORNER = 6
+const GRID_SPACING = 20
+const GRID_MAJOR_EVERY = 8
 
 /* ────────────────────────────────────────────────
    Default theme
    ──────────────────────────────────────────────── */
 
 const PIN_COLORS: Record<string, string> = {
-  exec:    '#9ca3af',
+  exec:    '#ffffff',
   string:  '#f472b6',
   number:  '#34d399',
   boolean: '#fb923c',
@@ -75,34 +78,29 @@ const PIN_COLORS: Record<string, string> = {
 
 const DEFAULT_THEME: Required<FlowTheme> = {
   canvas: {
-    background: '#0c0c0c',
-    dotColor: 'rgba(255,255,255,0.035)',
-    dotSpacing: DOT_SPACING,
+    background: '#1a1a1a',
+    gridColor: 'rgba(255,255,255,0.03)',
+    gridMajorColor: 'rgba(255,255,255,0.07)',
+    gridSpacing: GRID_SPACING,
+    gridMajorEvery: GRID_MAJOR_EVERY,
   },
   node: {
-    background: '#151520',
-    border: 'rgba(255,255,255,0.06)',
-    headerTint: 0.10,
-    text: '#e2e4ea',
-    subtext: '#6b7280',
+    background: '#252530',
+    border: 'rgba(255,255,255,0.08)',
+    text: '#ffffff',
+    subtext: '#9ca3af',
   },
   pin: PIN_COLORS,
   connection: {
     width: 1.8,
-    execColor: '#4b5563',
+    execColor: 'rgba(255,255,255,0.6)',
+    execWidth: 2,
   },
 }
 
 /* ────────────────────────────────────────────────
    Utilities
    ──────────────────────────────────────────────── */
-
-function hexToRgba(hex: string, a: number): string {
-  const r = parseInt(hex.slice(1, 3), 16)
-  const g = parseInt(hex.slice(3, 5), 16)
-  const b = parseInt(hex.slice(5, 7), 16)
-  return `rgba(${r},${g},${b},${a})`
-}
 
 function pinColor(type: string, theme: FlowTheme): string {
   return theme.pin?.[type] ?? PIN_COLORS[type] ?? '#6b7280'
@@ -162,50 +160,94 @@ function buildTheme(custom?: FlowTheme): FlowTheme {
    Background
    ──────────────────────────────────────────────── */
 
+function buildConnectedPins(graph: FlowGraph): Set<string> {
+  const set = new Set<string>()
+  for (const c of graph.connections) {
+    set.add(`${c.fromNodeId}:${c.fromPinId}:out`)
+    set.add(`${c.toNodeId}:${c.toPinId}:in`)
+  }
+  return set
+}
+
 function drawBackground(ctx: CanvasRenderingContext2D, w: number, h: number, theme: FlowTheme) {
   ctx.fillStyle = theme.canvas!.background!
   ctx.fillRect(0, 0, w, h)
 
-  const sp = theme.canvas!.dotSpacing ?? DOT_SPACING
-  ctx.fillStyle = theme.canvas!.dotColor!
+  const sp = theme.canvas!.gridSpacing ?? GRID_SPACING
+  const majorEvery = theme.canvas!.gridMajorEvery ?? GRID_MAJOR_EVERY
+  const majorSp = sp * majorEvery
+
+  // Fine grid lines
+  ctx.strokeStyle = theme.canvas!.gridColor!
+  ctx.lineWidth = 0.5
+  ctx.beginPath()
   for (let x = sp; x < w; x += sp) {
-    for (let y = sp; y < h; y += sp) {
-      ctx.beginPath()
-      ctx.arc(x, y, 0.7, 0, Math.PI * 2)
-      ctx.fill()
-    }
+    if (x % majorSp === 0) continue
+    ctx.moveTo(x, 0)
+    ctx.lineTo(x, h)
   }
+  for (let y = sp; y < h; y += sp) {
+    if (y % majorSp === 0) continue
+    ctx.moveTo(0, y)
+    ctx.lineTo(w, y)
+  }
+  ctx.stroke()
+
+  // Major grid lines
+  ctx.strokeStyle = theme.canvas!.gridMajorColor!
+  ctx.lineWidth = 1
+  ctx.beginPath()
+  for (let x = majorSp; x < w; x += majorSp) {
+    ctx.moveTo(x, 0)
+    ctx.lineTo(x, h)
+  }
+  for (let y = majorSp; y < h; y += majorSp) {
+    ctx.moveTo(0, y)
+    ctx.lineTo(w, y)
+  }
+  ctx.stroke()
 }
 
 /* ────────────────────────────────────────────────
-   Pins — diamond (exec) / circle (data)
+   Pins — triangle (exec) / circle (data)
    ──────────────────────────────────────────────── */
 
-function drawDiamond(ctx: CanvasRenderingContext2D, cx: number, cy: number, color: string) {
-  const s = 4.5
+function drawExecPin(ctx: CanvasRenderingContext2D, cx: number, cy: number, color: string, connected: boolean) {
+  const hw = 4.5
+  const hh = 5.5
   ctx.beginPath()
-  ctx.moveTo(cx, cy - s)
-  ctx.lineTo(cx + s, cy)
-  ctx.lineTo(cx, cy + s)
-  ctx.lineTo(cx - s, cy)
+  ctx.moveTo(cx - hw, cy - hh)
+  ctx.lineTo(cx + hw + 1, cy)
+  ctx.lineTo(cx - hw, cy + hh)
   ctx.closePath()
-  ctx.fillStyle = color
-  ctx.fill()
+  if (connected) {
+    ctx.fillStyle = color
+    ctx.fill()
+  } else {
+    ctx.strokeStyle = color
+    ctx.lineWidth = 1.5
+    ctx.stroke()
+  }
 }
 
-function drawCircle(ctx: CanvasRenderingContext2D, cx: number, cy: number, color: string) {
+function drawDataPin(ctx: CanvasRenderingContext2D, cx: number, cy: number, color: string, connected: boolean) {
   ctx.beginPath()
   ctx.arc(cx, cy, PIN_R, 0, Math.PI * 2)
-  ctx.strokeStyle = color
-  ctx.lineWidth = 1.5
-  ctx.stroke()
+  if (connected) {
+    ctx.fillStyle = color
+    ctx.fill()
+  } else {
+    ctx.strokeStyle = color
+    ctx.lineWidth = 1.5
+    ctx.stroke()
+  }
 }
 
 /* ────────────────────────────────────────────────
    Node
    ──────────────────────────────────────────────── */
 
-function drawNode(ctx: CanvasRenderingContext2D, node: FlowNode, theme: FlowTheme) {
+function drawNode(ctx: CanvasRenderingContext2D, node: FlowNode, theme: FlowTheme, connectedPins: Set<string>) {
   const x = node.position.x
   const y = node.position.y
   const w = node.width ?? NODE_W
@@ -214,9 +256,9 @@ function drawNode(ctx: CanvasRenderingContext2D, node: FlowNode, theme: FlowThem
 
   // Shadow
   ctx.save()
-  ctx.shadowColor = 'rgba(0,0,0,0.45)'
-  ctx.shadowBlur = 16
-  ctx.shadowOffsetY = 4
+  ctx.shadowColor = 'rgba(0,0,0,0.5)'
+  ctx.shadowBlur = 12
+  ctx.shadowOffsetY = 3
   ctx.beginPath()
   ctx.roundRect(x, y, w, h, CORNER)
   ctx.fillStyle = theme.node!.background!
@@ -229,16 +271,13 @@ function drawNode(ctx: CanvasRenderingContext2D, node: FlowNode, theme: FlowThem
   ctx.fillStyle = theme.node!.background!
   ctx.fill()
 
-  // Header tint (clip to node shape)
+  // Header — full color, clipped to node shape
   ctx.save()
   ctx.beginPath()
   ctx.roundRect(x, y, w, h, CORNER)
   ctx.clip()
-  ctx.fillStyle = hexToRgba(accent, theme.node!.headerTint as number)
-  ctx.fillRect(x, y, w, HEADER_H)
-  // Accent bar
   ctx.fillStyle = accent
-  ctx.fillRect(x, y, 3, HEADER_H)
+  ctx.fillRect(x, y, w, HEADER_H)
   ctx.restore()
 
   // Border
@@ -248,37 +287,24 @@ function drawNode(ctx: CanvasRenderingContext2D, node: FlowNode, theme: FlowThem
   ctx.lineWidth = 1
   ctx.stroke()
 
-  // Header separator
-  ctx.strokeStyle = theme.node!.border!
-  ctx.lineWidth = 1
-  ctx.beginPath()
-  ctx.moveTo(x, y + HEADER_H)
-  ctx.lineTo(x + w, y + HEADER_H)
-  ctx.stroke()
-
-  // Accent dot
-  ctx.beginPath()
-  ctx.arc(x + 12, y + HEADER_H / 2, 2.5, 0, Math.PI * 2)
-  ctx.fillStyle = accent
-  ctx.fill()
-
-  // Title
+  // Title — white on colored header
   ctx.fillStyle = theme.node!.text!
   ctx.font = '600 12px -apple-system, "Segoe UI", system-ui, sans-serif'
   ctx.textBaseline = 'middle'
   ctx.textAlign = 'left'
-  ctx.fillText(node.label, x + 20, y + HEADER_H / 2)
+  ctx.fillText(node.label, x + 12, y + HEADER_H / 2)
 
   // Input pins
   node.inputs.forEach((pin, i) => {
     const py = y + PIN_Y0 + i * PIN_ROW
     const px = x
     const col = pinColor(pin.type, theme)
+    const connected = connectedPins.has(`${node.id}:${pin.id}:in`)
 
     if (pin.type === 'exec') {
-      drawDiamond(ctx, px, py, col)
+      drawExecPin(ctx, px, py, col, connected)
     } else {
-      drawCircle(ctx, px, py, col)
+      drawDataPin(ctx, px, py, col, connected)
     }
 
     if (pin.label) {
@@ -286,7 +312,7 @@ function drawNode(ctx: CanvasRenderingContext2D, node: FlowNode, theme: FlowThem
       ctx.font = '11px -apple-system, "Segoe UI", system-ui, sans-serif'
       ctx.textAlign = 'left'
       ctx.textBaseline = 'middle'
-      ctx.fillText(pin.label, px + 10, py)
+      ctx.fillText(pin.label, px + 12, py)
     }
   })
 
@@ -295,11 +321,12 @@ function drawNode(ctx: CanvasRenderingContext2D, node: FlowNode, theme: FlowThem
     const py = y + PIN_Y0 + i * PIN_ROW
     const px = x + w
     const col = pinColor(pin.type, theme)
+    const connected = connectedPins.has(`${node.id}:${pin.id}:out`)
 
     if (pin.type === 'exec') {
-      drawDiamond(ctx, px, py, col)
+      drawExecPin(ctx, px, py, col, connected)
     } else {
-      drawCircle(ctx, px, py, col)
+      drawDataPin(ctx, px, py, col, connected)
     }
 
     if (pin.label) {
@@ -307,7 +334,7 @@ function drawNode(ctx: CanvasRenderingContext2D, node: FlowNode, theme: FlowThem
       ctx.font = '11px -apple-system, "Segoe UI", system-ui, sans-serif'
       ctx.textAlign = 'right'
       ctx.textBaseline = 'middle'
-      ctx.fillText(pin.label, px - 10, py)
+      ctx.fillText(pin.label, px - 12, py)
     }
   })
 }
@@ -335,7 +362,6 @@ function drawBezier(
 
 function drawConnections(ctx: CanvasRenderingContext2D, model: GraphModel, theme: FlowTheme) {
   const nodes = model.getNodes()
-  const lw = theme.connection!.width as number
 
   for (const conn of model.getConnections()) {
     const fromNode = nodes.find(n => n.id === conn.fromNodeId)
@@ -349,8 +375,11 @@ function drawConnections(ctx: CanvasRenderingContext2D, model: GraphModel, theme
     const fromPin = fromNode.outputs.find(p => p.id === conn.fromPinId)
     const isExec = fromPin?.type === 'exec'
     const color = isExec
-      ? (theme.connection!.execColor ?? '#4b5563')
+      ? (theme.connection!.execColor ?? 'rgba(255,255,255,0.6)')
       : pinColor(fromPin?.type ?? 'string', theme)
+    const lw = isExec
+      ? (theme.connection!.execWidth ?? 2)
+      : (theme.connection!.width ?? 1.8)
 
     drawBezier(ctx, fromP, toP, color, lw)
   }
@@ -366,11 +395,12 @@ function renderCanvas(
   h: number,
   model: GraphModel,
   theme: FlowTheme,
+  connectedPins: Set<string>,
 ) {
   drawBackground(ctx, w, h, theme)
   drawConnections(ctx, model, theme)
   for (const node of model.getNodes()) {
-    drawNode(ctx, node, theme)
+    drawNode(ctx, node, theme, connectedPins)
   }
 }
 
@@ -394,6 +424,7 @@ export const FlowCanvas: React.FC<FlowCanvasProps> = ({
 
     const theme = buildTheme(themeProp)
     const model = GraphModel.fromJSON(graph)
+    const connectedPins = buildConnectedPins(graph)
     const dpr = window.devicePixelRatio || 1
 
     function paint() {
@@ -401,7 +432,7 @@ export const FlowCanvas: React.FC<FlowCanvasProps> = ({
       canvas!.width = rect.width * dpr
       canvas!.height = rect.height * dpr
       ctx!.setTransform(dpr, 0, 0, dpr, 0, 0)
-      renderCanvas(ctx!, rect.width, rect.height, model, theme)
+      renderCanvas(ctx!, rect.width, rect.height, model, theme, connectedPins)
     }
 
     paint()

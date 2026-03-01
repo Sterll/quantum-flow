@@ -98,7 +98,7 @@ export const CrimsonTheme: Story = {
     width: 960,
     height: 460,
     theme: {
-      canvas: { background: '#0a0508', dotColor: 'rgba(255,100,100,0.03)' },
+      canvas: { background: '#0a0508', gridColor: 'rgba(255,100,100,0.02)', gridMajorColor: 'rgba(255,100,100,0.05)' },
       node: { background: '#1a0e12', border: 'rgba(255,80,80,0.08)', text: '#f0d0d8', subtext: '#8a5a6a' },
       connection: { width: 2 },
     },
