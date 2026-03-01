@@ -5,6 +5,7 @@ export interface NodeDefinition {
   label: string
   color?: string
   icon?: string
+  category?: string
   inputs: FlowPin[]
   outputs: FlowPin[]
   defaultData?: Record<string, unknown>
@@ -14,12 +15,27 @@ export interface NodeDefinitionWithFactory extends NodeDefinition {
   createInstance: (position: FlowNodePosition, overrides?: Partial<FlowNode>) => FlowNode
 }
 
-let _idCounter = 0
 function generateId(): string {
-  return `node-${Date.now()}-${++_idCounter}`
+  if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+    return crypto.randomUUID()
+  }
+  return `node-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
+}
+
+function validatePins(pins: FlowPin[], label: string): void {
+  const seen = new Set<string>()
+  for (const pin of pins) {
+    if (seen.has(pin.id)) {
+      throw new Error(`Duplicate pin ID '${pin.id}' in ${label}`)
+    }
+    seen.add(pin.id)
+  }
 }
 
 export function defineNode(definition: NodeDefinition): NodeDefinitionWithFactory {
+  validatePins(definition.inputs, `${definition.type} inputs`)
+  validatePins(definition.outputs, `${definition.type} outputs`)
+
   return {
     ...definition,
     createInstance(position: FlowNodePosition, overrides?: Partial<FlowNode>): FlowNode {
