@@ -72,7 +72,7 @@ Tests use **Vitest** with the `jsdom` environment. The test suite currently cont
 pnpm storybook
 ```
 
-Storybook 8 opens on [http://localhost:6006](http://localhost:6006) and provides an interactive playground for `FlowCanvas` and the various hooks. Use it to visually verify your changes.
+Storybook 8 opens on `http://localhost:6006` and provides an interactive playground for `FlowCanvas` and the various hooks. Use it to visually verify your changes.
 
 ### Build Storybook
 
