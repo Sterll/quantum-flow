@@ -1,13 +1,13 @@
+import React, { useMemo } from 'react'
 import type { Meta, StoryObj } from '@storybook/react'
 import { FlowCanvas } from '../src/components/FlowCanvas'
+import { GraphStore } from '../src/model/GraphStore'
 import type { FlowGraph } from '../src/types'
 
 const sampleGraph: FlowGraph = {
   nodes: [
     {
-      id: 'n1',
-      type: 'event/playerJoin',
-      label: 'On Player Join',
+      id: 'n1', type: 'event/playerJoin', label: 'On Player Join',
       position: { x: 60, y: 80 },
       inputs: [],
       outputs: [
@@ -15,13 +15,10 @@ const sampleGraph: FlowGraph = {
         { id: 'player', type: 'object', label: 'Player' },
         { id: 'name', type: 'string', label: 'Name' },
       ],
-      data: {},
-      color: '#6c63ff',
+      data: {}, color: '#6c63ff',
     },
     {
-      id: 'n2',
-      type: 'logic/branch',
-      label: 'Branch',
+      id: 'n2', type: 'logic/branch', label: 'Branch',
       position: { x: 360, y: 40 },
       inputs: [
         { id: 'exec', type: 'exec', label: '' },
@@ -31,29 +28,21 @@ const sampleGraph: FlowGraph = {
         { id: 'true', type: 'exec', label: 'True' },
         { id: 'false', type: 'exec', label: 'False' },
       ],
-      data: {},
-      color: '#f59e0b',
+      data: {}, color: '#f59e0b',
     },
     {
-      id: 'n3',
-      type: 'action/notify',
-      label: 'Send Notification',
+      id: 'n3', type: 'action/notify', label: 'Send Notification',
       position: { x: 660, y: 40 },
       inputs: [
         { id: 'exec', type: 'exec', label: '' },
         { id: 'message', type: 'string', label: 'Message' },
         { id: 'target', type: 'object', label: 'Target' },
       ],
-      outputs: [
-        { id: 'exec', type: 'exec', label: '' },
-      ],
-      data: {},
-      color: '#22c55e',
+      outputs: [{ id: 'exec', type: 'exec', label: '' }],
+      data: {}, color: '#22c55e',
     },
     {
-      id: 'n4',
-      type: 'action/log',
-      label: 'Console Log',
+      id: 'n4', type: 'action/log', label: 'Console Log',
       position: { x: 660, y: 260 },
       inputs: [
         { id: 'exec', type: 'exec', label: '' },
@@ -61,8 +50,7 @@ const sampleGraph: FlowGraph = {
         { id: 'level', type: 'number', label: 'Level' },
       ],
       outputs: [],
-      data: {},
-      color: '#ef4444',
+      data: {}, color: '#ef4444',
     },
   ],
   connections: [
@@ -75,14 +63,27 @@ const sampleGraph: FlowGraph = {
   ],
 }
 
-const meta: Meta<typeof FlowCanvas> = {
+function useStore(graph: FlowGraph): GraphStore {
+  return useMemo(() => {
+    const store = new GraphStore()
+    store.importGraph(graph)
+    return store
+  }, [])
+}
+
+const InteractiveCanvas = (props: { graph: FlowGraph; theme?: any; width?: number; height?: number }) => {
+  const store = useStore(props.graph)
+  return <FlowCanvas store={store} theme={props.theme} width={props.width} height={props.height} />
+}
+
+const meta: Meta<typeof InteractiveCanvas> = {
   title: 'FlowCanvas',
-  component: FlowCanvas,
+  component: InteractiveCanvas,
   parameters: { layout: 'fullscreen' },
 }
 
 export default meta
-type Story = StoryObj<typeof FlowCanvas>
+type Story = StoryObj<typeof InteractiveCanvas>
 
 export const Default: Story = {
   args: {

@@ -1,11 +1,13 @@
 import React, { useRef, useEffect } from 'react'
-import type { FlowGraph, FlowNode, FlowPin } from '../types'
-import type { NodeDefinitionWithFactory } from '../define'
-import { GraphStore } from '../model/GraphStore'
+import type { FlowNode, FlowPin } from '../types'
+import type { GraphStore } from '../model/GraphStore'
+import { useCanvasInteraction } from '../hooks/useCanvasInteraction'
+import type { DraftConnection } from '../hooks/useConnection'
+import type { Rect } from '../hooks/useSelection'
 
 /* ══════════════════════════════════════════════════════════════
-   FlowCanvas — Claude Terminal WorkflowGraphEngine port
-   Faithful reproduction of the Claude Terminal rendering style.
+   FlowCanvas — Interactive Canvas 2D node editor
+   Claude Terminal WorkflowGraphEngine rendering style
    ══════════════════════════════════════════════════════════════ */
 
 export interface FlowTheme {
@@ -13,16 +15,15 @@ export interface FlowTheme {
   node?: { titleBar?: string; body?: string; border?: string; text?: string; subtext?: string }
   pin?: { exec?: string; string?: string; number?: string; boolean?: string; object?: string; array?: string; [k: string]: string | undefined }
   connection?: { width?: number; opacity?: number }
+  selection?: { color?: string }
 }
 
 export interface FlowCanvasProps {
-  graph: FlowGraph
-  nodeDefinitions?: NodeDefinitionWithFactory[]
+  store: GraphStore
   theme?: FlowTheme
-  onGraphChange?: (graph: FlowGraph) => void
-  onConnect?: (fromNodeId: string, fromPinId: string, toNodeId: string, toPinId: string) => void
-  onNodeMove?: (nodeId: string, x: number, y: number) => void
   readOnly?: boolean
+  snapToGrid?: number
+  onSelectionChange?: (ids: Set<string>) => void
   width?: number | string
   height?: number | string
 }
@@ -62,6 +63,7 @@ const DEFAULTS = {
   subtext: '#888',
   wireW: 2,
   wireOpacity: 0.7,
+  selectionColor: '#60a5fa',
 }
 
 /* ── helpers ── */
@@ -94,9 +96,9 @@ function pinPos(node: FlowNode, pinId: string, isOutput: boolean): Vec2 | null {
   }
 }
 
-function buildConnectedPins(graph: FlowGraph): Set<string> {
+function buildConnectedPins(nodes: FlowNode[], connections: Array<{ fromNodeId: string; fromPinId: string; toNodeId: string; toPinId: string }>): Set<string> {
   const set = new Set<string>()
-  for (const c of graph.connections) {
+  for (const c of connections) {
     set.add(`${c.fromNodeId}:${c.fromPinId}:out`)
     set.add(`${c.toNodeId}:${c.toPinId}:in`)
   }
@@ -121,30 +123,40 @@ function buildTheme(custom?: FlowTheme): FlowTheme {
       width: custom?.connection?.width ?? DEFAULTS.wireW,
       opacity: custom?.connection?.opacity ?? DEFAULTS.wireOpacity,
     },
+    selection: {
+      color: custom?.selection?.color ?? DEFAULTS.selectionColor,
+    },
   }
 }
 
-/* ── grid (from Claude Terminal _drawGrid) ── */
+/* ── grid ── */
 
-function drawGrid(ctx: CanvasRenderingContext2D, w: number, h: number, theme: FlowTheme) {
+function drawGrid(ctx: CanvasRenderingContext2D, w: number, h: number, theme: FlowTheme, offsetX: number, offsetY: number, zoom: number) {
   ctx.fillStyle = theme.canvas!.background!
   ctx.fillRect(0, 0, w, h)
+
+  const gridSize = GRID_SIZE * zoom
+  if (gridSize < 4) return // too zoomed out to show grid
 
   ctx.strokeStyle = theme.canvas!.gridColor!
   ctx.lineWidth = 0.5
   ctx.beginPath()
-  for (let x = GRID_SIZE; x < w; x += GRID_SIZE) {
+
+  const startX = offsetX % gridSize
+  const startY = offsetY % gridSize
+
+  for (let x = startX; x < w; x += gridSize) {
     ctx.moveTo(x, 0)
     ctx.lineTo(x, h)
   }
-  for (let y = GRID_SIZE; y < h; y += GRID_SIZE) {
+  for (let y = startY; y < h; y += gridSize) {
     ctx.moveTo(0, y)
     ctx.lineTo(w, y)
   }
   ctx.stroke()
 }
 
-/* ── pins (from Claude Terminal _drawPins) ── */
+/* ── pins ── */
 
 function drawPins(
   ctx: CanvasRenderingContext2D,
@@ -164,7 +176,6 @@ function drawPins(
       const connected = connectedPins.has(`${node.id}:${pin.id}:${isOutput ? 'out' : 'in'}`)
 
       if (pin.type === 'exec') {
-        // Diamond shape (from Claude Terminal)
         const r = DIAMOND_R
         ctx.beginPath()
         ctx.moveTo(px, py - r)
@@ -181,11 +192,9 @@ function drawPins(
           ctx.stroke()
         }
       } else {
-        // Circle data pin (from Claude Terminal)
         ctx.beginPath()
         ctx.arc(px, py, PIN_R, 0, Math.PI * 2)
         if (connected) {
-          // Filled with glow
           ctx.save()
           ctx.shadowColor = color
           ctx.shadowBlur = 6
@@ -193,14 +202,12 @@ function drawPins(
           ctx.fill()
           ctx.restore()
         } else {
-          // Hollow stroke
           ctx.strokeStyle = hexToRgba(color, 0.6)
           ctx.lineWidth = 1.5
           ctx.stroke()
         }
       }
 
-      // Pin label (from Claude Terminal: colored by type, 500 11px)
       if (pin.label) {
         ctx.fillStyle = hexToRgba(color, 0.7)
         ctx.font = `500 11px ${FONT}`
@@ -209,7 +216,6 @@ function drawPins(
         const labelX = isOutput ? px - 12 : px + 12
         ctx.fillText(pin.label, labelX, py)
 
-        // Type name below label (from Claude Terminal: 400 9px, 0.3 opacity)
         if (pin.type !== 'exec') {
           ctx.fillStyle = hexToRgba(color, 0.3)
           ctx.font = `400 9px ${FONT}`
@@ -223,13 +229,14 @@ function drawPins(
   drawPinList(node.outputs, true)
 }
 
-/* ── node (from Claude Terminal _drawNode) ── */
+/* ── node ── */
 
 function drawNode(
   ctx: CanvasRenderingContext2D,
   node: FlowNode,
   theme: FlowTheme,
   connectedPins: Set<string>,
+  isSelected: boolean,
 ) {
   const x = node.position.x
   const y = node.position.y
@@ -248,52 +255,54 @@ function drawNode(
   ctx.fill()
   ctx.restore()
 
-  // Title bar — separate shape, #141416 base
+  // Title bar
   ctx.save()
   ctx.beginPath()
   ctx.roundRect(x, y, w, h, CORNER)
   ctx.clip()
-
-  // Title bar base
   ctx.fillStyle = theme.node!.titleBar!
   ctx.fillRect(x, y, w, TITLE_H)
-
-  // Accent tint overlay on title (0.18 opacity — from Claude Terminal)
   ctx.fillStyle = hexToRgba(accent, 0.18)
   ctx.fillRect(x, y, w, TITLE_H)
-
-  // Top accent stripe — 2px (from Claude Terminal)
   ctx.fillStyle = accent
   ctx.fillRect(x, y, w, 2)
-
   ctx.restore()
 
-  // Body — #101012, separate from title
+  // Body
   ctx.save()
   ctx.beginPath()
   ctx.roundRect(x, y, w, h, CORNER)
   ctx.clip()
-
   ctx.fillStyle = theme.node!.body!
   ctx.fillRect(x, y + TITLE_H, w, h - TITLE_H)
-
-  // Accent gradient bleed at top of body (from Claude Terminal)
   const gradient = ctx.createLinearGradient(x, y + TITLE_H, x, y + TITLE_H + 18)
   gradient.addColorStop(0, hexToRgba(accent, 0.06))
   gradient.addColorStop(1, 'transparent')
   ctx.fillStyle = gradient
   ctx.fillRect(x, y + TITLE_H, w, 18)
-
   ctx.restore()
 
-  // Border — very subtle (from Claude Terminal: rgba(255,255,255,.04), 0.5)
+  // Border
   ctx.beginPath()
   ctx.roundRect(x, y, w, h, CORNER)
-  ctx.strokeStyle = theme.node!.border!
-  ctx.lineWidth = 0.5
+  ctx.strokeStyle = isSelected ? theme.selection!.color! : theme.node!.border!
+  ctx.lineWidth = isSelected ? 2 : 0.5
   ctx.stroke()
 
-  // Title dot with glow (from Claude Terminal: shadowBlur 4)
+  // Selection glow
+  if (isSelected) {
+    ctx.save()
+    ctx.shadowColor = theme.selection!.color!
+    ctx.shadowBlur = 8
+    ctx.beginPath()
+    ctx.roundRect(x, y, w, h, CORNER)
+    ctx.strokeStyle = theme.selection!.color!
+    ctx.lineWidth = 1.5
+    ctx.stroke()
+    ctx.restore()
+  }
+
+  // Title dot
   ctx.save()
   ctx.shadowColor = accent
   ctx.shadowBlur = 4
@@ -303,28 +312,27 @@ function drawNode(
   ctx.fill()
   ctx.restore()
 
-  // Title text (from Claude Terminal: 600 12px, #bbb)
+  // Title text
   ctx.fillStyle = theme.node!.text!
   ctx.font = `600 12px ${FONT}`
   ctx.textBaseline = 'middle'
   ctx.textAlign = 'left'
   ctx.fillText(node.label, x + 22, y + TITLE_H * 0.5)
 
-  // Draw pins
   drawPins(ctx, node, theme, connectedPins)
 }
 
-/* ── connections (from Claude Terminal _drawLinks) ── */
+/* ── connections ── */
 
-function drawConnections(ctx: CanvasRenderingContext2D, model: GraphStore, theme: FlowTheme) {
-  const nodes = model.getNodes()
+function drawConnections(ctx: CanvasRenderingContext2D, store: GraphStore, theme: FlowTheme) {
+  const nodes = store.getNodes()
 
   ctx.save()
   ctx.globalAlpha = theme.connection!.opacity as number
   ctx.lineWidth = theme.connection!.width as number
   ctx.lineCap = 'round'
 
-  for (const conn of model.getConnections()) {
+  for (const conn of store.getConnections()) {
     const fromNode = nodes.find(n => n.id === conn.fromNodeId)
     const toNode = nodes.find(n => n.id === conn.toNodeId)
     if (!fromNode || !toNode) continue
@@ -335,18 +343,12 @@ function drawConnections(ctx: CanvasRenderingContext2D, model: GraphStore, theme
 
     const fromPin = fromNode.outputs.find(p => p.id === conn.fromPinId)
     const color = pinColor(fromPin?.type ?? 'exec', theme)
-
-    // Bezier with dx * 0.5 control points (from Claude Terminal)
     const dx = Math.abs(toP.x - fromP.x)
     const offset = Math.max(dx * 0.5, 60)
 
     ctx.beginPath()
     ctx.moveTo(fromP.x, fromP.y)
-    ctx.bezierCurveTo(
-      fromP.x + offset, fromP.y,
-      toP.x - offset, toP.y,
-      toP.x, toP.y,
-    )
+    ctx.bezierCurveTo(fromP.x + offset, fromP.y, toP.x - offset, toP.y, toP.x, toP.y)
     ctx.strokeStyle = color
     ctx.stroke()
   }
@@ -354,57 +356,154 @@ function drawConnections(ctx: CanvasRenderingContext2D, model: GraphStore, theme
   ctx.restore()
 }
 
-/* ── render ── */
+/* ── draft connection ── */
 
-function renderCanvas(
-  ctx: CanvasRenderingContext2D,
-  w: number,
-  h: number,
-  model: GraphStore,
-  theme: FlowTheme,
-  connectedPins: Set<string>,
-) {
-  drawGrid(ctx, w, h, theme)
-  drawConnections(ctx, model, theme)
-  for (const node of model.getNodes()) {
-    drawNode(ctx, node, theme, connectedPins)
+function drawDraftConnection(ctx: CanvasRenderingContext2D, draft: DraftConnection, theme: FlowTheme) {
+  ctx.save()
+  ctx.globalAlpha = 0.5
+  ctx.lineWidth = (theme.connection!.width as number) ?? 2
+  ctx.lineCap = 'round'
+  ctx.setLineDash([6, 4])
+
+  const from = draft.fromPos
+  const to = draft.toPos
+  const dx = Math.abs(to.x - from.x)
+  const offset = Math.max(dx * 0.5, 60)
+
+  ctx.beginPath()
+  if (draft.isFromOutput) {
+    ctx.moveTo(from.x, from.y)
+    ctx.bezierCurveTo(from.x + offset, from.y, to.x - offset, to.y, to.x, to.y)
+  } else {
+    ctx.moveTo(from.x, from.y)
+    ctx.bezierCurveTo(from.x - offset, from.y, to.x + offset, to.y, to.x, to.y)
   }
+  ctx.strokeStyle = '#ffffff'
+  ctx.stroke()
+  ctx.restore()
+}
+
+/* ── rubber-band ── */
+
+function drawRubberBand(ctx: CanvasRenderingContext2D, rect: Rect, theme: FlowTheme) {
+  const color = theme.selection!.color!
+  ctx.save()
+  ctx.fillStyle = hexToRgba(color.startsWith('#') ? color : '#60a5fa', 0.08)
+  ctx.fillRect(rect.x, rect.y, rect.w, rect.h)
+  ctx.strokeStyle = hexToRgba(color.startsWith('#') ? color : '#60a5fa', 0.4)
+  ctx.lineWidth = 1
+  ctx.setLineDash([4, 4])
+  ctx.strokeRect(rect.x, rect.y, rect.w, rect.h)
+  ctx.restore()
 }
 
 /* ── component ── */
 
-export const FlowCanvas: React.FC<FlowCanvasProps> = ({ graph, theme: customTheme, width = '100%', height = '600px' }) => {
+export const FlowCanvas: React.FC<FlowCanvasProps> = ({
+  store,
+  theme: customTheme,
+  readOnly,
+  snapToGrid,
+  onSelectionChange,
+  width = '100%',
+  height = '600px',
+}) => {
   const canvasRef = useRef<HTMLCanvasElement>(null)
+  const theme = buildTheme(customTheme)
+
+  const interaction = useCanvasInteraction(store, {
+    readOnly,
+    snapToGrid,
+    onSelectionChange,
+  })
 
   useEffect(() => {
     const canvas = canvasRef.current
     if (!canvas) return
-    const ctx = canvas.getContext('2d')
-    if (!ctx) return
 
-    const theme = buildTheme(customTheme)
-    const model = new GraphStore()
-    model.importGraph(graph)
-    const connectedPins = buildConnectedPins(graph)
+    const detach = interaction.attach(canvas)
     const dpr = window.devicePixelRatio || 1
 
-    function paint() {
-      const rect = canvas!.getBoundingClientRect()
-      canvas!.width = rect.width * dpr
-      canvas!.height = rect.height * dpr
-      ctx!.setTransform(dpr, 0, 0, dpr, 0, 0)
-      renderCanvas(ctx!, rect.width, rect.height, model, theme, connectedPins)
+    let rafId: number
+
+    const paint = () => {
+      if (!interaction.needsRedraw.current) {
+        rafId = requestAnimationFrame(paint)
+        return
+      }
+      interaction.needsRedraw.current = false
+
+      const rect = canvas.getBoundingClientRect()
+      const cw = rect.width
+      const ch = rect.height
+      canvas.width = cw * dpr
+      canvas.height = ch * dpr
+
+      const ctx = canvas.getContext('2d')!
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+
+      // Draw grid in screen-space (before viewport transform)
+      const { offset, zoom } = interaction.viewport.ref.current
+      drawGrid(ctx, cw, ch, theme, offset.x, offset.y, zoom)
+
+      // Apply viewport transform for everything else
+      ctx.save()
+      ctx.translate(offset.x, offset.y)
+      ctx.scale(zoom, zoom)
+
+      // Draw connections
+      drawConnections(ctx, store, theme)
+
+      // Draw nodes
+      const nodes = store.getNodes()
+      const connections = store.getConnections()
+      const connectedPins = buildConnectedPins(nodes, connections)
+      for (const node of nodes) {
+        drawNode(ctx, node, theme, connectedPins, interaction.selection.selected.has(node.id))
+      }
+
+      // Draw draft connection
+      if (interaction.connection.draft) {
+        drawDraftConnection(ctx, interaction.connection.draft, theme)
+      }
+
+      // Draw rubber-band
+      if (interaction.selection.rubberBand) {
+        drawRubberBand(ctx, interaction.selection.rubberBand, theme)
+      }
+
+      ctx.restore()
+
+      rafId = requestAnimationFrame(paint)
     }
 
-    paint()
-    const observer = new ResizeObserver(paint)
+    // Initial draw
+    interaction.needsRedraw.current = true
+    rafId = requestAnimationFrame(paint)
+
+    // Also redraw on resize
+    const observer = new ResizeObserver(() => {
+      interaction.needsRedraw.current = true
+    })
     observer.observe(canvas)
-    return () => observer.disconnect()
-  }, [graph, customTheme])
+
+    // Redraw when store changes
+    const unsub = store.events.on('graph:imported', () => {
+      interaction.needsRedraw.current = true
+    })
+
+    return () => {
+      cancelAnimationFrame(rafId)
+      observer.disconnect()
+      detach()
+      unsub()
+    }
+  }, [store, customTheme, readOnly, snapToGrid])
 
   return <canvas ref={canvasRef} style={{
     width: typeof width === 'number' ? `${width}px` : width,
     height: typeof height === 'number' ? `${height}px` : height,
     display: 'block',
+    outline: 'none',
   }} />
 }
