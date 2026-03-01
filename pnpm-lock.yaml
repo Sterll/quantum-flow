@@ -15,13 +15,13 @@ importers:
         version: 8.6.14(@types/react@18.3.28)(storybook@8.6.17)
       '@storybook/blocks':
         specifier: ^8.6.14
-        version: 8.6.14(react-dom@19.2.4(react@18.3.1))(react@18.3.1)(storybook@8.6.17)
+        version: 8.6.14(react-dom@18.3.1(react@18.3.1))(react@18.3.1)(storybook@8.6.17)
       '@storybook/react':
         specifier: ^8.6.17
-        version: 8.6.17(react-dom@19.2.4(react@18.3.1))(react@18.3.1)(storybook@8.6.17)(typescript@5.9.3)
+        version: 8.6.17(react-dom@18.3.1(react@18.3.1))(react@18.3.1)(storybook@8.6.17)(typescript@5.9.3)
       '@storybook/react-vite':
         specifier: ^8.6.17
-        version: 8.6.17(react-dom@19.2.4(react@18.3.1))(react@18.3.1)(rollup@4.59.0)(storybook@8.6.17)(typescript@5.9.3)(vite@5.4.21)
+        version: 8.6.17(react-dom@18.3.1(react@18.3.1))(react@18.3.1)(rollup@4.59.0)(storybook@8.6.17)(typescript@5.9.3)(vite@5.4.21)
       '@types/react':
         specifier: ^18
         version: 18.3.28
@@ -32,8 +32,8 @@ importers:
         specifier: ^18
         version: 18.3.1
       react-dom:
-        specifier: ^19.2.4
-        version: 19.2.4(react@18.3.1)
+        specifier: ^18.3.1
+        version: 18.3.1(react@18.3.1)
       storybook:
         specifier: ^8.6.17
         version: 8.6.17
@@ -1511,10 +1511,10 @@ packages:
     resolution: {integrity: sha512-hlSJDQ2synMPKFZOsKo9Hi8WWZTC7POR8EmWvTSjow+VDgKzkmjQvFm2fk0tmRw+f0vTOIYKlarR0iL4996pdg==}
     engines: {node: '>=16.14.0'}
 
-  react-dom@19.2.4:
-    resolution: {integrity: sha512-AXJdLo8kgMbimY95O2aKQqsz2iWi9jMgKJhRBAxECE4IFxfcazB2LmzloIoibJI3C12IlY20+KFaLv+71bUJeQ==}
+  react-dom@18.3.1:
+    resolution: {integrity: sha512-5m4nQKp+rZRb09LNH59GM4BxTh9251/ylbKIbpe7TpGxfJ+9kv6BLkLBXIjjspbgbnIBNqlI23tRnTWT0snUIw==}
     peerDependencies:
-      react: ^19.2.4
+      react: ^18.3.1
 
   react-is@18.3.1:
     resolution: {integrity: sha512-/LLMVyas0ljjAtoYiPqYiL8VWXzUUdThrmU5+n20DZv+a+ClRoevUzw5JxU+Ieh5/c87ytoTBV9G1FiKfNJdmg==}
@@ -1557,8 +1557,8 @@ packages:
     resolution: {integrity: sha512-xAg7SOnEhrm5zI3puOOKyy1OMcMlIJZYNJY7xLBwSze0UjhPLnWfj2GF2EpT0jmzaJKIWKHLsaSSajf35bcYnA==}
     engines: {node: '>=v12.22.7'}
 
-  scheduler@0.27.0:
-    resolution: {integrity: sha512-eNv+WrVbKu1f3vbYJT/xtiF5syA5HPIMtf9IgY/nKg0sWqzAUEvqY/xm7OcZc/qafLx/iO9FgOmeSAp4v5ti/Q==}
+  scheduler@0.23.2:
+    resolution: {integrity: sha512-UOShsPwz7NrMUqhR6t0hWjFduvOzbtv7toDH1/hIrfRNIDBnnBWd0CwJTGvTpngVlmwGCdP9/Zl/tVrDqcuYzQ==}
 
   semver@6.3.1:
     resolution: {integrity: sha512-BR7VvDCVHO+q2xBEWskxS6DJE1qRnb7DxzUrogb71CWoSficBxYsiAGd+Kl0mmq/MprG9yArRkyrQxTO6XjMzA==}
@@ -2363,11 +2363,11 @@ snapshots:
   '@storybook/addon-docs@8.6.14(@types/react@18.3.28)(storybook@8.6.17)':
     dependencies:
       '@mdx-js/react': 3.1.1(@types/react@18.3.28)(react@18.3.1)
-      '@storybook/blocks': 8.6.14(react-dom@19.2.4(react@18.3.1))(react@18.3.1)(storybook@8.6.17)
+      '@storybook/blocks': 8.6.14(react-dom@18.3.1(react@18.3.1))(react@18.3.1)(storybook@8.6.17)
       '@storybook/csf-plugin': 8.6.14(storybook@8.6.17)
-      '@storybook/react-dom-shim': 8.6.14(react-dom@19.2.4(react@18.3.1))(react@18.3.1)(storybook@8.6.17)
+      '@storybook/react-dom-shim': 8.6.14(react-dom@18.3.1(react@18.3.1))(react@18.3.1)(storybook@8.6.17)
       react: 18.3.1
-      react-dom: 19.2.4(react@18.3.1)
+      react-dom: 18.3.1(react@18.3.1)
       storybook: 8.6.17
       ts-dedent: 2.2.0
     transitivePeerDependencies:
@@ -2415,14 +2415,14 @@ snapshots:
       memoizerific: 1.11.3
       storybook: 8.6.17
 
-  '@storybook/blocks@8.6.14(react-dom@19.2.4(react@18.3.1))(react@18.3.1)(storybook@8.6.17)':
+  '@storybook/blocks@8.6.14(react-dom@18.3.1(react@18.3.1))(react@18.3.1)(storybook@8.6.17)':
     dependencies:
-      '@storybook/icons': 1.6.0(react-dom@19.2.4(react@18.3.1))(react@18.3.1)
+      '@storybook/icons': 1.6.0(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
       storybook: 8.6.17
       ts-dedent: 2.2.0
     optionalDependencies:
       react: 18.3.1
-      react-dom: 19.2.4(react@18.3.1)
+      react-dom: 18.3.1(react@18.3.1)
 
   '@storybook/builder-vite@8.6.17(storybook@8.6.17)(vite@5.4.21)':
     dependencies:
@@ -2467,10 +2467,10 @@ snapshots:
 
   '@storybook/global@5.0.0': {}
 
-  '@storybook/icons@1.6.0(react-dom@19.2.4(react@18.3.1))(react@18.3.1)':
+  '@storybook/icons@1.6.0(react-dom@18.3.1(react@18.3.1))(react@18.3.1)':
     dependencies:
       react: 18.3.1
-      react-dom: 19.2.4(react@18.3.1)
+      react-dom: 18.3.1(react@18.3.1)
 
   '@storybook/manager-api@8.6.17(storybook@8.6.17)':
     dependencies:
@@ -2480,29 +2480,29 @@ snapshots:
     dependencies:
       storybook: 8.6.17
 
-  '@storybook/react-dom-shim@8.6.14(react-dom@19.2.4(react@18.3.1))(react@18.3.1)(storybook@8.6.17)':
+  '@storybook/react-dom-shim@8.6.14(react-dom@18.3.1(react@18.3.1))(react@18.3.1)(storybook@8.6.17)':
     dependencies:
       react: 18.3.1
-      react-dom: 19.2.4(react@18.3.1)
+      react-dom: 18.3.1(react@18.3.1)
       storybook: 8.6.17
 
-  '@storybook/react-dom-shim@8.6.17(react-dom@19.2.4(react@18.3.1))(react@18.3.1)(storybook@8.6.17)':
+  '@storybook/react-dom-shim@8.6.17(react-dom@18.3.1(react@18.3.1))(react@18.3.1)(storybook@8.6.17)':
     dependencies:
       react: 18.3.1
-      react-dom: 19.2.4(react@18.3.1)
+      react-dom: 18.3.1(react@18.3.1)
       storybook: 8.6.17
 
-  '@storybook/react-vite@8.6.17(react-dom@19.2.4(react@18.3.1))(react@18.3.1)(rollup@4.59.0)(storybook@8.6.17)(typescript@5.9.3)(vite@5.4.21)':
+  '@storybook/react-vite@8.6.17(react-dom@18.3.1(react@18.3.1))(react@18.3.1)(rollup@4.59.0)(storybook@8.6.17)(typescript@5.9.3)(vite@5.4.21)':
     dependencies:
       '@joshwooding/vite-plugin-react-docgen-typescript': 0.5.0(typescript@5.9.3)(vite@5.4.21)
       '@rollup/pluginutils': 5.3.0(rollup@4.59.0)
       '@storybook/builder-vite': 8.6.17(storybook@8.6.17)(vite@5.4.21)
-      '@storybook/react': 8.6.17(react-dom@19.2.4(react@18.3.1))(react@18.3.1)(storybook@8.6.17)(typescript@5.9.3)
+      '@storybook/react': 8.6.17(react-dom@18.3.1(react@18.3.1))(react@18.3.1)(storybook@8.6.17)(typescript@5.9.3)
       find-up: 5.0.0
       magic-string: 0.30.21
       react: 18.3.1
       react-docgen: 7.1.1
-      react-dom: 19.2.4(react@18.3.1)
+      react-dom: 18.3.1(react@18.3.1)
       resolve: 1.22.11
       storybook: 8.6.17
       tsconfig-paths: 4.2.0
@@ -2512,16 +2512,16 @@ snapshots:
       - supports-color
       - typescript
 
-  '@storybook/react@8.6.17(react-dom@19.2.4(react@18.3.1))(react@18.3.1)(storybook@8.6.17)(typescript@5.9.3)':
+  '@storybook/react@8.6.17(react-dom@18.3.1(react@18.3.1))(react@18.3.1)(storybook@8.6.17)(typescript@5.9.3)':
     dependencies:
       '@storybook/components': 8.6.17(storybook@8.6.17)
       '@storybook/global': 5.0.0
       '@storybook/manager-api': 8.6.17(storybook@8.6.17)
       '@storybook/preview-api': 8.6.17(storybook@8.6.17)
-      '@storybook/react-dom-shim': 8.6.17(react-dom@19.2.4(react@18.3.1))(react@18.3.1)(storybook@8.6.17)
+      '@storybook/react-dom-shim': 8.6.17(react-dom@18.3.1(react@18.3.1))(react@18.3.1)(storybook@8.6.17)
       '@storybook/theming': 8.6.17(storybook@8.6.17)
       react: 18.3.1
-      react-dom: 19.2.4(react@18.3.1)
+      react-dom: 18.3.1(react@18.3.1)
       storybook: 8.6.17
     optionalDependencies:
       typescript: 5.9.3
@@ -3261,10 +3261,11 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  react-dom@19.2.4(react@18.3.1):
+  react-dom@18.3.1(react@18.3.1):
     dependencies:
+      loose-envify: 1.4.0
       react: 18.3.1
-      scheduler: 0.27.0
+      scheduler: 0.23.2
 
   react-is@18.3.1: {}
 
@@ -3333,7 +3334,9 @@ snapshots:
     dependencies:
       xmlchars: 2.2.0
 
-  scheduler@0.27.0: {}
+  scheduler@0.23.2:
+    dependencies:
+      loose-envify: 1.4.0
 
   semver@6.3.1: {}
 
