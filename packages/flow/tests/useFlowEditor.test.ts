@@ -149,4 +149,109 @@ describe('useFlowEditor', () => {
     expect(result.current.addNode).toBe(first.addNode)
     expect(result.current.toJSON).toBe(first.toJSON)
   })
+
+  it('moveNode proxies to store', () => {
+    const { result } = renderHook(() => useFlowEditor())
+    act(() => {
+      result.current.addNode(makeNode('n1'))
+    })
+    act(() => {
+      result.current.moveNode('n1', { x: 100, y: 200 })
+    })
+    const node = result.current.getNode('n1')
+    expect(node?.position).toEqual({ x: 100, y: 200 })
+  })
+
+  it('updateNodeData merges data', () => {
+    const { result } = renderHook(() => useFlowEditor())
+    act(() => {
+      result.current.addNode({ ...makeNode('n1'), data: { a: 1 } })
+    })
+    act(() => {
+      result.current.updateNodeData('n1', { b: 2 })
+    })
+    const node = result.current.getNode('n1')
+    expect(node?.data).toEqual({ a: 1, b: 2 })
+  })
+
+  it('batch groups operations into single undo', () => {
+    const { result } = renderHook(() => useFlowEditor())
+    act(() => {
+      result.current.batch(() => {
+        result.current.store.addNode(makeNode('n1'))
+        result.current.store.addNode(makeNode('n2'))
+      })
+    })
+    expect(result.current.getNodes()).toHaveLength(2)
+    act(() => {
+      result.current.undo()
+    })
+    expect(result.current.getNodes()).toHaveLength(0)
+  })
+
+  it('clear removes all nodes and connections', () => {
+    const { result } = renderHook(() => useFlowEditor())
+    act(() => {
+      result.current.addNode(makeNode('n1'))
+      result.current.addNode(makeNode('n2'))
+    })
+    act(() => {
+      result.current.clear()
+    })
+    expect(result.current.getNodes()).toHaveLength(0)
+    expect(result.current.getConnections()).toHaveLength(0)
+  })
+
+  it('getNode returns a node by id', () => {
+    const { result } = renderHook(() => useFlowEditor())
+    act(() => {
+      result.current.addNode(makeNode('n1'))
+    })
+    expect(result.current.getNode('n1')).toBeDefined()
+    expect(result.current.getNode('n1')?.label).toBe('n1')
+    expect(result.current.getNode('nonexistent')).toBeUndefined()
+  })
+
+  it('getNodes returns all nodes', () => {
+    const { result } = renderHook(() => useFlowEditor())
+    act(() => {
+      result.current.addNode(makeNode('n1'))
+      result.current.addNode(makeNode('n2'))
+    })
+    expect(result.current.getNodes()).toHaveLength(2)
+  })
+
+  it('getConnections returns all connections', () => {
+    const { result } = renderHook(() => useFlowEditor())
+    act(() => {
+      result.current.addNode({
+        ...makeNode('n1'),
+        outputs: [{ id: 'out', type: 'exec', label: '' }],
+      })
+      result.current.addNode({
+        ...makeNode('n2'),
+        inputs: [{ id: 'in', type: 'exec', label: '' }],
+      })
+      result.current.addConnection(makeConnection('c1', 'n1', 'out', 'n2', 'in'))
+    })
+    expect(result.current.getConnections()).toHaveLength(1)
+  })
+
+  it('getConnectionsForNode filters by node', () => {
+    const { result } = renderHook(() => useFlowEditor())
+    act(() => {
+      result.current.addNode({
+        ...makeNode('n1'),
+        outputs: [{ id: 'out', type: 'exec', label: '' }],
+      })
+      result.current.addNode({
+        ...makeNode('n2'),
+        inputs: [{ id: 'in', type: 'exec', label: '' }],
+      })
+      result.current.addNode(makeNode('n3'))
+      result.current.addConnection(makeConnection('c1', 'n1', 'out', 'n2', 'in'))
+    })
+    expect(result.current.getConnectionsForNode('n1')).toHaveLength(1)
+    expect(result.current.getConnectionsForNode('n3')).toHaveLength(0)
+  })
 })

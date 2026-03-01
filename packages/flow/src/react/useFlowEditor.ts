@@ -1,5 +1,5 @@
 import { useMemo, useCallback } from 'react'
-import type { FlowNode, FlowConnection, FlowGraph } from '../types'
+import type { FlowNode, FlowConnection, FlowGraph, FlowNodePosition } from '../types'
 import type { Validator } from '../model/Validator'
 import type { NodeDefinitionWithFactory } from '../define/defineNode'
 import { NodeRegistry } from '../define/NodeRegistry'
@@ -26,6 +26,15 @@ export interface FlowEditorAPI {
   removeNode(nodeId: string): void
   addConnection(connection: FlowConnection): void
   removeConnection(connectionId: string): void
+
+  moveNode(nodeId: string, position: FlowNodePosition): void
+  updateNodeData(nodeId: string, data: Record<string, unknown>): void
+  batch(fn: () => void): void
+  clear(): void
+  getNode(id: string): FlowNode | undefined
+  getNodes(): FlowNode[]
+  getConnections(): FlowConnection[]
+  getConnectionsForNode(nodeId: string): FlowConnection[]
 
   toJSON(): FlowGraph
   fromJSON(graph: FlowGraph): void
@@ -72,6 +81,14 @@ export function useFlowEditor(options?: UseFlowEditorOptions): FlowEditorAPI {
   const removeNode = useCallback((nodeId: string) => store.removeNode(nodeId), [store])
   const addConnection = useCallback((conn: FlowConnection) => store.addConnection(conn), [store])
   const removeConnection = useCallback((connId: string) => store.removeConnection(connId), [store])
+  const moveNode = useCallback((nodeId: string, position: FlowNodePosition) => store.moveNode(nodeId, position), [store])
+  const updateNodeData = useCallback((nodeId: string, data: Record<string, unknown>) => store.updateNodeData(nodeId, data), [store])
+  const batch = useCallback((fn: () => void) => store.batch(fn), [store])
+  const clear = useCallback(() => store.clear(), [store])
+  const getNode = useCallback((id: string) => store.getNode(id), [store])
+  const getNodes = useCallback(() => store.getNodes(), [store])
+  const getConnections = useCallback(() => store.getConnections(), [store])
+  const getConnectionsForNode = useCallback((nodeId: string) => store.getConnectionsForNode(nodeId), [store])
   const toJSON = useCallback(() => store.getState(), [store])
   const fromJSON = useCallback((graph: FlowGraph) => store.importGraph(graph), [store])
 
@@ -85,6 +102,14 @@ export function useFlowEditor(options?: UseFlowEditorOptions): FlowEditorAPI {
     removeNode,
     addConnection,
     removeConnection,
+    moveNode,
+    updateNodeData,
+    batch,
+    clear,
+    getNode,
+    getNodes,
+    getConnections,
+    getConnectionsForNode,
     toJSON,
     fromJSON,
     registry,
