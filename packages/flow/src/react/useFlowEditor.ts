@@ -33,17 +33,22 @@ export interface FlowEditorAPI {
   registry: NodeRegistry | null
 }
 
-const noopHistory: UseHistoryAPI = {
+const noopHistory: Pick<UseHistoryAPI, 'undo' | 'redo' | 'canUndo' | 'canRedo'> = {
   undo: () => false,
   redo: () => false,
   canUndo: false,
   canRedo: false,
-  history: null as any,
 }
 
 export function useFlowEditor(options?: UseFlowEditorOptions): FlowEditorAPI {
   const historyEnabled = options?.history !== false
-  const historyOptions = typeof options?.history === 'object' ? options.history : undefined
+
+  // When history is disabled, pass maxSize: 1 to minimize memory overhead.
+  // useHistory is always called (Rules of Hooks), but with maxSize: 1 the
+  // HistoryManager keeps at most 1 entry in the stack instead of the default 50.
+  const historyOptions = historyEnabled
+    ? (typeof options?.history === 'object' ? options.history : undefined)
+    : { maxSize: 1 }
 
   const store = useGraphStore({
     initialGraph: options?.initialGraph,

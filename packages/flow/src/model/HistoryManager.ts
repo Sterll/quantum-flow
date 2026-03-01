@@ -74,6 +74,7 @@ export class HistoryManager {
     const mutationEvents: Array<keyof GraphEvents> = [
       'node:added', 'node:removed', 'node:moved', 'node:dataChanged',
       'connection:added', 'connection:removed', 'graph:cleared',
+      'graph:imported',
     ]
 
     for (const event of mutationEvents) {
@@ -136,6 +137,7 @@ export class HistoryManager {
       case 'connection:added': return `Connected ${p.connection?.fromNodeId} -> ${p.connection?.toNodeId}`
       case 'connection:removed': return `Removed connection '${p.connectionId}'`
       case 'graph:cleared': return 'Cleared graph'
+      case 'graph:imported': return 'Imported graph'
       default: return event
     }
   }

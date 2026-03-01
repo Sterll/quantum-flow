@@ -8,6 +8,10 @@ export interface UseGraphStoreOptions {
   validator?: Validator
 }
 
+/**
+ * Creates a stable GraphStore instance. Options (initialGraph, validator)
+ * are applied at creation only and ignored on subsequent renders.
+ */
 export function useGraphStore(options?: UseGraphStoreOptions): GraphStore {
   return useMemo(() => {
     const store = new GraphStore({ validator: options?.validator })

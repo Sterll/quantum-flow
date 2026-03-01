@@ -39,19 +39,8 @@ export function useHistory(store: GraphStore, options?: UseHistoryOptions): UseH
     return () => { unsubs.forEach(unsub => unsub()) }
   }, [store, manager])
 
-  const undo = useCallback(() => {
-    const result = manager.undo()
-    setCanUndo(manager.canUndo())
-    setCanRedo(manager.canRedo())
-    return result
-  }, [manager])
-
-  const redo = useCallback(() => {
-    const result = manager.redo()
-    setCanUndo(manager.canUndo())
-    setCanRedo(manager.canRedo())
-    return result
-  }, [manager])
+  const undo = useCallback(() => manager.undo(), [manager])
+  const redo = useCallback(() => manager.redo(), [manager])
 
   return { undo, redo, canUndo, canRedo, history: manager }
 }
