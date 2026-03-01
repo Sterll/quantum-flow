@@ -1,7 +1,8 @@
-import React, { useRef, useEffect } from 'react'
+import React, { useRef, useEffect, useMemo } from 'react'
 import type { FlowNode, FlowPin } from '../types'
 import type { GraphStore } from '../model/GraphStore'
 import { useCanvasInteraction } from '../hooks/useCanvasInteraction'
+import { nodeHeight } from '../hooks/hitTest'
 import type { DraftConnection } from '../hooks/useConnection'
 import type { Rect } from '../hooks/useSelection'
 
@@ -77,11 +78,6 @@ function hexToRgba(hex: string, alpha: number): string {
 
 function pinColor(type: string, theme: FlowTheme): string {
   return theme.pin?.[type] ?? PIN_COLORS[type] ?? '#6b7280'
-}
-
-function nodeHeight(node: FlowNode): number {
-  const rows = Math.max(node.inputs.length, node.outputs.length)
-  return rows === 0 ? TITLE_H + 14 : PIN_Y0 + rows * SLOT_H + 8
 }
 
 interface Vec2 { x: number; y: number }
@@ -409,7 +405,7 @@ export const FlowCanvas: React.FC<FlowCanvasProps> = ({
   height = '600px',
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null)
-  const theme = buildTheme(customTheme)
+  const theme = useMemo(() => buildTheme(customTheme), [customTheme])
 
   const interaction = useCanvasInteraction(store, {
     readOnly,
@@ -488,15 +484,25 @@ export const FlowCanvas: React.FC<FlowCanvasProps> = ({
     observer.observe(canvas)
 
     // Redraw when store changes
-    const unsub = store.events.on('graph:imported', () => {
-      interaction.needsRedraw.current = true
-    })
+    const unsubImported = store.events.on('graph:imported', () => { interaction.needsRedraw.current = true })
+    const unsubNodeAdded = store.events.on('node:added', () => { interaction.needsRedraw.current = true })
+    const unsubNodeRemoved = store.events.on('node:removed', () => { interaction.needsRedraw.current = true })
+    const unsubNodeMoved = store.events.on('node:moved', () => { interaction.needsRedraw.current = true })
+    const unsubConnAdded = store.events.on('connection:added', () => { interaction.needsRedraw.current = true })
+    const unsubConnRemoved = store.events.on('connection:removed', () => { interaction.needsRedraw.current = true })
+    const unsubBatchEnd = store.events.on('batch:end', () => { interaction.needsRedraw.current = true })
 
     return () => {
       cancelAnimationFrame(rafId)
       observer.disconnect()
       detach()
-      unsub()
+      unsubImported()
+      unsubNodeAdded()
+      unsubNodeRemoved()
+      unsubNodeMoved()
+      unsubConnAdded()
+      unsubConnRemoved()
+      unsubBatchEnd()
     }
   }, [store, customTheme, readOnly, snapToGrid])
 

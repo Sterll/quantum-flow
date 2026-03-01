@@ -45,6 +45,16 @@ export function useCanvasInteraction(
     readOnly: options?.readOnly,
   })
 
+  // Refs to track current state (avoid stale closures in event handlers)
+  const draggingRef = useRef(nodeDrag.dragging)
+  draggingRef.current = nodeDrag.dragging
+
+  const draftRef = useRef(connection.draft)
+  draftRef.current = connection.draft
+
+  const selectedRef = useRef(selection.selected)
+  selectedRef.current = selection.selected
+
   // Rubber-band drag state (not in a hook — local refs)
   const rubberStart = useRef<{ x: number; y: number } | null>(null)
   const isPanning = useRef(false)
@@ -92,7 +102,7 @@ export function useCanvasInteraction(
       if (nodeHit) {
         if (e.shiftKey) {
           selection.toggle(nodeHit.id)
-        } else if (!selection.selected.has(nodeHit.id)) {
+        } else if (!selectedRef.current.has(nodeHit.id)) {
           selection.select(nodeHit.id)
         }
         nodeDrag.startDrag(nodeHit.id, world)
@@ -110,9 +120,7 @@ export function useCanvasInteraction(
     }
 
     const onMouseMove = (e: MouseEvent) => {
-      const { world } = getWorldPos(e)
-
-      // Panning
+      // Panning uses raw client coordinates, no world needed
       if (isPanning.current) {
         const dx = e.clientX - panStart.current.x
         const dy = e.clientY - panStart.current.y
@@ -122,15 +130,17 @@ export function useCanvasInteraction(
         return
       }
 
+      const { world } = getWorldPos(e)
+
       // Node dragging
-      if (nodeDrag.dragging) {
+      if (draggingRef.current) {
         nodeDrag.moveDrag(world)
         markDirty()
         return
       }
 
       // Connection dragging
-      if (connection.draft) {
+      if (draftRef.current) {
         connection.updateDraft(world)
         markDirty()
         return
@@ -179,7 +189,7 @@ export function useCanvasInteraction(
       }
 
       // End node drag
-      if (nodeDrag.dragging) {
+      if (draggingRef.current) {
         nodeDrag.endDrag()
         canvas.style.cursor = 'grab'
         markDirty()
@@ -187,7 +197,7 @@ export function useCanvasInteraction(
       }
 
       // End connection
-      if (connection.draft) {
+      if (draftRef.current) {
         const { world } = getWorldPos(e)
         const nodes = store.getNodes()
         const pinHit = hitTestPin(world, nodes)

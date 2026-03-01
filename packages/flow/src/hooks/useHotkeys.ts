@@ -1,4 +1,4 @@
-import { useCallback } from 'react'
+import { useCallback, useRef } from 'react'
 import type { GraphStore } from '../model/GraphStore'
 
 export interface HotkeyOptions {
@@ -13,28 +13,32 @@ export interface HotkeysAPI {
 }
 
 export function useHotkeys(store: GraphStore, options: HotkeyOptions): HotkeysAPI {
+  const optionsRef = useRef(options)
+  optionsRef.current = options
+
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
-    if (options.readOnly) return
+    const opts = optionsRef.current
+    if (opts.readOnly) return
 
     if (e.key === 'Delete' || e.key === 'Backspace') {
-      if (options.selected.size === 0) return
+      if (opts.selected.size === 0) return
       store.batch(() => {
-        for (const nodeId of options.selected) {
+        for (const nodeId of opts.selected) {
           store.removeNode(nodeId)
         }
       })
-      options.clearSelection()
+      opts.clearSelection()
       e.preventDefault()
       return
     }
 
     if ((e.ctrlKey || e.metaKey) && e.key === 'a') {
       const allIds = store.getNodes().map(n => n.id)
-      options.selectAll?.(allIds)
+      opts.selectAll?.(allIds)
       e.preventDefault()
       return
     }
-  }, [store, options])
+  }, [store])
 
   return { handleKeyDown }
 }

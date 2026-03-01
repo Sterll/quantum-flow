@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useRef } from 'react'
 import type { GraphStore } from '../model/GraphStore'
 import type { PinHit } from './hitTest'
 
@@ -29,40 +29,57 @@ function generateConnectionId(): string {
 
 export function useConnection(store: GraphStore): ConnectionAPI {
   const [draft, setDraft] = useState<DraftConnection | null>(null)
+  const draftRef = useRef<DraftConnection | null>(null)
 
   const startConnection = useCallback((pin: PinHit) => {
-    setDraft({
+    const newDraft: DraftConnection = {
       fromNodeId: pin.nodeId,
       fromPinId: pin.pinId,
       fromPos: pin.pos,
       toPos: pin.pos,
       isFromOutput: pin.isOutput,
-    })
+    }
+    draftRef.current = newDraft
+    setDraft(newDraft)
   }, [])
 
   const updateDraft = useCallback((worldPos: Vec2) => {
-    setDraft(prev => prev ? { ...prev, toPos: worldPos } : null)
+    setDraft(prev => {
+      if (!prev) return null
+      const updated = { ...prev, toPos: worldPos }
+      draftRef.current = updated
+      return updated
+    })
   }, [])
 
   const finishConnection = useCallback((pin: PinHit) => {
-    setDraft(current => {
-      if (!current) return null
-      if (current.isFromOutput === pin.isOutput) return null
+    const current = draftRef.current
+    if (!current) return
 
-      const fromNodeId = current.isFromOutput ? current.fromNodeId : pin.nodeId
-      const fromPinId = current.isFromOutput ? current.fromPinId : pin.pinId
-      const toNodeId = current.isFromOutput ? pin.nodeId : current.fromNodeId
-      const toPinId = current.isFromOutput ? pin.pinId : current.fromPinId
+    if (current.isFromOutput === pin.isOutput) {
+      // Same direction — cancel
+      draftRef.current = null
+      setDraft(null)
+      return
+    }
 
-      try {
-        store.addConnection({ id: generateConnectionId(), fromNodeId, fromPinId, toNodeId, toPinId })
-      } catch { /* validation failed */ }
+    const fromNodeId = current.isFromOutput ? current.fromNodeId : pin.nodeId
+    const fromPinId = current.isFromOutput ? current.fromPinId : pin.pinId
+    const toNodeId = current.isFromOutput ? pin.nodeId : current.fromNodeId
+    const toPinId = current.isFromOutput ? pin.pinId : current.fromPinId
 
-      return null
-    })
+    try {
+      store.addConnection({ id: generateConnectionId(), fromNodeId, fromPinId, toNodeId, toPinId })
+    } catch { /* validation failed */ }
+
+    draftRef.current = null
+    setDraft(null)
   }, [store])
 
-  const cancelConnection = useCallback(() => { setDraft(null) }, [])
+  const cancelConnection = useCallback(() => {
+    draftRef.current = null
+    setDraft(null)
+  }, [])
 
   return { draft, startConnection, updateDraft, finishConnection, cancelConnection }
 }
