@@ -6,27 +6,72 @@ const sampleGraph: FlowGraph = {
   nodes: [
     {
       id: 'n1',
-      type: 'fivem/server/event',
+      type: 'event/playerJoin',
       label: 'On Player Join',
-      position: { x: 80, y: 100 },
+      position: { x: 60, y: 80 },
       inputs: [],
-      outputs: [{ id: 'exec', type: 'exec', label: '' }],
-      data: { eventName: 'playerConnecting' },
+      outputs: [
+        { id: 'exec', type: 'exec', label: '' },
+        { id: 'player', type: 'object', label: 'Player' },
+        { id: 'name', type: 'string', label: 'Name' },
+      ],
+      data: {},
       color: '#6c63ff',
     },
     {
       id: 'n2',
-      type: 'fivem/server/notify',
+      type: 'logic/branch',
+      label: 'Branch',
+      position: { x: 360, y: 40 },
+      inputs: [
+        { id: 'exec', type: 'exec', label: '' },
+        { id: 'condition', type: 'boolean', label: 'Condition' },
+      ],
+      outputs: [
+        { id: 'true', type: 'exec', label: 'True' },
+        { id: 'false', type: 'exec', label: 'False' },
+      ],
+      data: {},
+      color: '#f59e0b',
+    },
+    {
+      id: 'n3',
+      type: 'action/notify',
       label: 'Send Notification',
-      position: { x: 350, y: 100 },
-      inputs: [{ id: 'exec', type: 'exec', label: '' }, { id: 'msg', type: 'string', label: 'Message' }],
-      outputs: [{ id: 'exec', type: 'exec', label: '' }],
-      data: { message: 'Welcome!' },
+      position: { x: 660, y: 40 },
+      inputs: [
+        { id: 'exec', type: 'exec', label: '' },
+        { id: 'message', type: 'string', label: 'Message' },
+        { id: 'target', type: 'object', label: 'Target' },
+      ],
+      outputs: [
+        { id: 'exec', type: 'exec', label: '' },
+      ],
+      data: {},
       color: '#22c55e',
+    },
+    {
+      id: 'n4',
+      type: 'action/log',
+      label: 'Console Log',
+      position: { x: 660, y: 260 },
+      inputs: [
+        { id: 'exec', type: 'exec', label: '' },
+        { id: 'text', type: 'string', label: 'Text' },
+        { id: 'level', type: 'number', label: 'Level' },
+      ],
+      outputs: [],
+      data: {},
+      color: '#ef4444',
     },
   ],
   connections: [
     { id: 'c1', fromNodeId: 'n1', fromPinId: 'exec', toNodeId: 'n2', toPinId: 'exec' },
+    { id: 'c2', fromNodeId: 'n2', fromPinId: 'true', toNodeId: 'n3', toPinId: 'exec' },
+    { id: 'c3', fromNodeId: 'n2', fromPinId: 'false', toNodeId: 'n4', toPinId: 'exec' },
+    { id: 'c4', fromNodeId: 'n1', fromPinId: 'name', toNodeId: 'n3', toPinId: 'message' },
+    { id: 'c5', fromNodeId: 'n1', fromPinId: 'player', toNodeId: 'n3', toPinId: 'target' },
+    { id: 'c6', fromNodeId: 'n1', fromPinId: 'name', toNodeId: 'n4', toPinId: 'text' },
   ],
 }
 
@@ -42,20 +87,20 @@ type Story = StoryObj<typeof FlowCanvas>
 export const Default: Story = {
   args: {
     graph: sampleGraph,
-    width: 800,
-    height: 500,
+    width: 960,
+    height: 460,
   },
 }
 
-export const CustomTheme: Story = {
+export const CrimsonTheme: Story = {
   args: {
     graph: sampleGraph,
-    width: 800,
-    height: 500,
+    width: 960,
+    height: 460,
     theme: {
-      canvas: { background: '#0a0a0f', grid: '#111122' },
-      node: { background: '#111122', border: '#ff6b6b', header: '#1a0a0a', text: '#fff' },
-      connection: { color: '#ff6b6b', width: 3 },
+      canvas: { background: '#0a0508', grid: 'rgba(255,100,100,0.025)', gridMajor: 'rgba(255,100,100,0.06)' },
+      node: { background: '#1a0e12', border: 'rgba(255,80,80,0.1)', header: '#220f14', text: '#f0d0d8', subtext: '#8a5a6a' },
+      connection: { width: 3, glowOpacity: 0.25 },
     },
   },
 }
@@ -63,7 +108,7 @@ export const CustomTheme: Story = {
 export const EmptyGraph: Story = {
   args: {
     graph: { nodes: [], connections: [] },
-    width: 800,
-    height: 500,
+    width: 960,
+    height: 460,
   },
 }

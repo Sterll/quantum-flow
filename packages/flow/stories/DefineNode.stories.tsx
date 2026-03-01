@@ -1,29 +1,55 @@
 import type { Meta, StoryObj } from '@storybook/react'
 import { FlowCanvas } from '../src/components/FlowCanvas'
 import { defineNode } from '../src/define/defineNode'
+import type { FlowGraph } from '../src/types'
 
 const EventNode = defineNode({
   type: 'fivem/server/event',
   label: 'Server Event',
   color: '#6c63ff',
   inputs: [],
-  outputs: [{ id: 'exec', type: 'exec', label: '' }],
+  outputs: [
+    { id: 'exec', type: 'exec', label: '' },
+    { id: 'source', type: 'number', label: 'Source' },
+  ],
 })
 
 const CommandNode = defineNode({
   type: 'fivem/server/command',
   label: 'Register Command',
   color: '#f59e0b',
-  inputs: [{ id: 'exec', type: 'exec', label: '' }],
-  outputs: [{ id: 'exec', type: 'exec', label: '' }, { id: 'args', type: 'array', label: 'Args' }],
+  inputs: [
+    { id: 'exec', type: 'exec', label: '' },
+    { id: 'name', type: 'string', label: 'Name' },
+  ],
+  outputs: [
+    { id: 'exec', type: 'exec', label: '' },
+    { id: 'args', type: 'array', label: 'Args' },
+  ],
 })
 
-const graph = {
-  nodes: [
-    EventNode.createInstance({ x: 80, y: 120 }),
-    CommandNode.createInstance({ x: 350, y: 120 }),
+const PrintNode = defineNode({
+  type: 'fivem/server/print',
+  label: 'Print',
+  color: '#22c55e',
+  inputs: [
+    { id: 'exec', type: 'exec', label: '' },
+    { id: 'text', type: 'string', label: 'Text' },
   ],
-  connections: [],
+  outputs: [],
+})
+
+const eventInstance = EventNode.createInstance({ x: 60, y: 100 }, { id: 'ev1' })
+const cmdInstance = CommandNode.createInstance({ x: 360, y: 80 }, { id: 'cmd1' })
+const printInstance = PrintNode.createInstance({ x: 660, y: 120 }, { id: 'pr1' })
+
+const graph: FlowGraph = {
+  nodes: [eventInstance, cmdInstance, printInstance],
+  connections: [
+    { id: 'c1', fromNodeId: 'ev1', fromPinId: 'exec', toNodeId: 'cmd1', toPinId: 'exec' },
+    { id: 'c2', fromNodeId: 'cmd1', fromPinId: 'exec', toNodeId: 'pr1', toPinId: 'exec' },
+    { id: 'c3', fromNodeId: 'cmd1', fromPinId: 'args', toNodeId: 'pr1', toPinId: 'text' },
+  ],
 }
 
 const meta: Meta<typeof FlowCanvas> = {
@@ -35,5 +61,5 @@ const meta: Meta<typeof FlowCanvas> = {
 export default meta
 
 export const FivemNodes: StoryObj<typeof FlowCanvas> = {
-  args: { graph, width: 800, height: 500 },
+  args: { graph, width: 960, height: 380 },
 }
