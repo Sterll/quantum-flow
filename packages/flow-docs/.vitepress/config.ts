@@ -9,6 +9,8 @@ export default defineConfig({
       { text: 'Guide', link: '/guide/concepts' },
       { text: 'API', link: '/api/hooks' },
       { text: 'Examples', link: '/examples/minimal' },
+      { text: 'FAQ', link: '/faq' },
+      { text: 'Changelog', link: '/changelog' },
     ],
     sidebar: {
       '/guide/': [
