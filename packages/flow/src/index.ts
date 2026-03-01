@@ -1,4 +1,5 @@
 export * from './types'
 export * from './model/GraphModel'
 export * from './model/ConnectionValidator'
+export * from './model/History'
 export * from './define'
