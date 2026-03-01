@@ -1,5 +1,5 @@
 import React, { useRef, useEffect } from 'react'
-import type { FlowGraph, FlowNode, FlowPin } from '../types'
+import type { FlowGraph, FlowNode } from '../types'
 import type { NodeDefinitionWithFactory } from '../define'
 import { GraphModel } from '../model/GraphModel'
 import { ConnectionValidator } from '../model/ConnectionValidator'
@@ -55,24 +55,25 @@ export interface FlowCanvasProps {
    Layout constants
    ═══════════════════════════════════════════════════════════ */
 
-const NODE_W = 232
-const HEADER_H = 38
-const PIN_ROW = 28
+const NODE_W = 236
+const HEADER_H = 40
+const PIN_ROW = 30
 const PIN_R = 5.5
-const EXEC_S = 6.5
-const PIN_Y0 = 52
-const PAD_BOTTOM = 18
+const PIN_Y0 = 54
+const PAD_BOTTOM = 20
 const CORNER = 10
 const ACCENT_W = 4
 const GRID_STEP = 24
 const GRID_MAJOR = 5
+const FLOW_PARTICLES = 4
+const FLOW_SPEED = 0.28
 
 /* ═══════════════════════════════════════════════════════════
-   Default theme — "Midnight Forge"
+   Default theme — "Obsidian Engine"
    ═══════════════════════════════════════════════════════════ */
 
 const PIN_COLORS: Record<string, string> = {
-  exec:    '#bfc8d4',
+  exec:    '#c0c8d6',
   string:  '#f472b6',
   number:  '#34d399',
   boolean: '#fb923c',
@@ -82,28 +83,106 @@ const PIN_COLORS: Record<string, string> = {
 
 const DEFAULT_THEME: FlowTheme = {
   canvas: {
-    background: '#0b0b14',
-    grid: 'rgba(255,255,255,0.03)',
-    gridMajor: 'rgba(255,255,255,0.07)',
+    background: '#08080e',
+    grid: 'rgba(255,255,255,0.025)',
+    gridMajor: 'rgba(255,255,255,0.06)',
   },
   node: {
-    background: '#13132b',
-    border: 'rgba(255,255,255,0.06)',
-    header: '#1a1a3a',
-    text: '#e8ecf4',
-    subtext: '#6b7a94',
-    shadow: 'rgba(0,0,0,0.55)',
+    background: '#111128',
+    border: 'rgba(255,255,255,0.055)',
+    header: '#181840',
+    text: '#e6eaf2',
+    subtext: '#5a6a86',
+    shadow: 'rgba(0,0,0,0.7)',
   },
   pin: PIN_COLORS,
   connection: {
     width: 2.5,
-    glowSize: 8,
-    glowOpacity: 0.18,
+    glowSize: 10,
+    glowOpacity: 0.2,
   },
 }
 
 /* ═══════════════════════════════════════════════════════════
-   Helpers
+   Color utilities
+   ═══════════════════════════════════════════════════════════ */
+
+function hexToRgba(hex: string, alpha: number): string {
+  const r = parseInt(hex.slice(1, 3), 16)
+  const g = parseInt(hex.slice(3, 5), 16)
+  const b = parseInt(hex.slice(5, 7), 16)
+  return `rgba(${r},${g},${b},${alpha})`
+}
+
+function hexToRgb(hex: string): [number, number, number] {
+  return [
+    parseInt(hex.slice(1, 3), 16),
+    parseInt(hex.slice(3, 5), 16),
+    parseInt(hex.slice(5, 7), 16),
+  ]
+}
+
+function lerpColor(a: string, b: string, t: number): string {
+  const [ar, ag, ab] = hexToRgb(a)
+  const [br, bg, bb] = hexToRgb(b)
+  const r = Math.round(ar + (br - ar) * t)
+  const g = Math.round(ag + (bg - ag) * t)
+  const bl = Math.round(ab + (bb - ab) * t)
+  return `rgb(${r},${g},${bl})`
+}
+
+/* ═══════════════════════════════════════════════════════════
+   Bezier math
+   ═══════════════════════════════════════════════════════════ */
+
+interface Vec2 { x: number; y: number }
+
+function bezierControlPoints(from: Vec2, to: Vec2): [Vec2, Vec2] {
+  const dx = Math.abs(to.x - from.x)
+  const cp = Math.max(dx * 0.45, 80)
+  return [
+    { x: from.x + cp, y: from.y },
+    { x: to.x - cp, y: to.y },
+  ]
+}
+
+function cubicBezier(from: Vec2, cp1: Vec2, cp2: Vec2, to: Vec2, t: number): Vec2 {
+  const mt = 1 - t
+  const mt2 = mt * mt
+  const mt3 = mt2 * mt
+  const t2 = t * t
+  const t3 = t2 * t
+  return {
+    x: mt3 * from.x + 3 * mt2 * t * cp1.x + 3 * mt * t2 * cp2.x + t3 * to.x,
+    y: mt3 * from.y + 3 * mt2 * t * cp1.y + 3 * mt * t2 * cp2.y + t3 * to.y,
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════
+   Noise texture
+   ═══════════════════════════════════════════════════════════ */
+
+function createNoisePattern(ctx: CanvasRenderingContext2D): CanvasPattern | null {
+  const size = 150
+  const offscreen = document.createElement('canvas')
+  offscreen.width = size
+  offscreen.height = size
+  const octx = offscreen.getContext('2d')
+  if (!octx) return null
+  const img = octx.createImageData(size, size)
+  for (let i = 0; i < img.data.length; i += 4) {
+    const v = Math.random() * 12
+    img.data[i] = v
+    img.data[i + 1] = v
+    img.data[i + 2] = v
+    img.data[i + 3] = 10
+  }
+  octx.putImageData(img, 0, 0)
+  return ctx.createPattern(offscreen, 'repeat')
+}
+
+/* ═══════════════════════════════════════════════════════════
+   Theme builder
    ═══════════════════════════════════════════════════════════ */
 
 function merge<T extends Record<string, unknown>>(base: T, over?: Partial<T>): T {
@@ -120,20 +199,16 @@ function buildTheme(custom?: FlowTheme): FlowTheme {
 }
 
 function pinColor(type: string, theme: FlowTheme): string {
-  return theme.pin?.[type] ?? PIN_COLORS[type] ?? '#6b7a94'
+  return theme.pin?.[type] ?? PIN_COLORS[type] ?? '#5a6a86'
 }
 
 function nodeHeight(node: FlowNode): number {
   const rows = Math.max(node.inputs.length, node.outputs.length)
-  if (rows === 0) return HEADER_H + 26
+  if (rows === 0) return HEADER_H + 28
   return PIN_Y0 + (rows - 1) * PIN_ROW + PIN_R + PAD_BOTTOM
 }
 
-function pinPos(
-  node: FlowNode,
-  pinId: string,
-  isOutput: boolean,
-): { x: number; y: number } | null {
+function pinPos(node: FlowNode, pinId: string, isOutput: boolean): Vec2 | null {
   const list = isOutput ? node.outputs : node.inputs
   const idx = list.findIndex(p => p.id === pinId)
   if (idx < 0) return null
@@ -143,123 +218,205 @@ function pinPos(
   }
 }
 
-function hexToRgba(hex: string, alpha: number): string {
-  const r = parseInt(hex.slice(1, 3), 16)
-  const g = parseInt(hex.slice(3, 5), 16)
-  const b = parseInt(hex.slice(5, 7), 16)
-  return `rgba(${r},${g},${b},${alpha})`
-}
-
 /* ═══════════════════════════════════════════════════════════
-   Drawing — Grid
+   Drawing — Background layer
    ═══════════════════════════════════════════════════════════ */
 
-function drawGrid(
+function drawBackground(
   ctx: CanvasRenderingContext2D,
   w: number,
   h: number,
-  dotColor: string,
-  majorColor: string,
+  theme: FlowTheme,
+  noise: CanvasPattern | null,
 ) {
+  // Solid fill
+  ctx.fillStyle = theme.canvas!.background!
+  ctx.fillRect(0, 0, w, h)
+
+  // Noise overlay
+  if (noise) {
+    ctx.save()
+    ctx.fillStyle = noise
+    ctx.fillRect(0, 0, w, h)
+    ctx.restore()
+  }
+
+  // Grid — minor dots
+  ctx.fillStyle = theme.canvas!.grid!
   for (let gx = GRID_STEP; gx < w; gx += GRID_STEP) {
     for (let gy = GRID_STEP; gy < h; gy += GRID_STEP) {
-      const major =
-        gx % (GRID_STEP * GRID_MAJOR) === 0 &&
-        gy % (GRID_STEP * GRID_MAJOR) === 0
-      ctx.fillStyle = major ? majorColor : dotColor
       ctx.beginPath()
-      ctx.arc(gx, gy, major ? 1.4 : 0.8, 0, Math.PI * 2)
+      ctx.arc(gx, gy, 0.7, 0, Math.PI * 2)
       ctx.fill()
     }
   }
+
+  // Grid — major crosshairs
+  const majorStep = GRID_STEP * GRID_MAJOR
+  ctx.strokeStyle = theme.canvas!.gridMajor!
+  ctx.lineWidth = 0.6
+  for (let gx = majorStep; gx < w; gx += majorStep) {
+    for (let gy = majorStep; gy < h; gy += majorStep) {
+      const arm = 5
+      ctx.beginPath()
+      ctx.moveTo(gx - arm, gy)
+      ctx.lineTo(gx + arm, gy)
+      ctx.moveTo(gx, gy - arm)
+      ctx.lineTo(gx, gy + arm)
+      ctx.stroke()
+    }
+  }
+
+  // Vignette
+  const vig = ctx.createRadialGradient(w / 2, h / 2, 0, w / 2, h / 2, Math.max(w, h) * 0.62)
+  vig.addColorStop(0, 'rgba(140,130,255,0.008)')
+  vig.addColorStop(0.5, 'transparent')
+  vig.addColorStop(1, 'rgba(0,0,0,0.2)')
+  ctx.fillStyle = vig
+  ctx.fillRect(0, 0, w, h)
 }
 
 /* ═══════════════════════════════════════════════════════════
-   Drawing — Pins
+   Drawing — Pins (exec arrow + data ring)
    ═══════════════════════════════════════════════════════════ */
 
-function drawExecPin(
-  ctx: CanvasRenderingContext2D,
-  cx: number,
-  cy: number,
-  color: string,
-) {
-  const s = EXEC_S
+function drawExecPin(ctx: CanvasRenderingContext2D, cx: number, cy: number, color: string) {
+  // Arrow / pentagon pointing right
+  const bw = 4.5
+  const bh = 7
+  const pw = 8
+
+  // Outer glow
+  ctx.save()
+  ctx.shadowColor = color
+  ctx.shadowBlur = 6
+  ctx.globalAlpha = 0.3
   ctx.beginPath()
-  ctx.moveTo(cx, cy - s)
-  ctx.lineTo(cx + s, cy)
-  ctx.lineTo(cx, cy + s)
-  ctx.lineTo(cx - s, cy)
+  ctx.moveTo(cx - bw, cy - bh)
+  ctx.lineTo(cx + 1, cy - bh)
+  ctx.lineTo(cx + pw, cy)
+  ctx.lineTo(cx + 1, cy + bh)
+  ctx.lineTo(cx - bw, cy + bh)
   ctx.closePath()
   ctx.fillStyle = color
   ctx.fill()
-  ctx.strokeStyle = hexToRgba(color, 0.4)
-  ctx.lineWidth = 1
-  ctx.stroke()
-}
+  ctx.restore()
 
-function drawDataPin(
-  ctx: CanvasRenderingContext2D,
-  cx: number,
-  cy: number,
-  color: string,
-) {
-  // Outer glow ring
+  // Main shape
   ctx.beginPath()
-  ctx.arc(cx, cy, PIN_R + 2, 0, Math.PI * 2)
-  ctx.fillStyle = hexToRgba(color, 0.12)
-  ctx.fill()
-
-  // Main circle
-  ctx.beginPath()
-  ctx.arc(cx, cy, PIN_R, 0, Math.PI * 2)
+  ctx.moveTo(cx - bw, cy - bh)
+  ctx.lineTo(cx + 1, cy - bh)
+  ctx.lineTo(cx + pw, cy)
+  ctx.lineTo(cx + 1, cy + bh)
+  ctx.lineTo(cx - bw, cy + bh)
+  ctx.closePath()
   ctx.fillStyle = color
   ctx.fill()
 
-  // Inner highlight
+  // Top edge highlight
+  ctx.strokeStyle = 'rgba(255,255,255,0.2)'
+  ctx.lineWidth = 0.5
   ctx.beginPath()
-  ctx.arc(cx - 1.2, cy - 1.2, PIN_R * 0.35, 0, Math.PI * 2)
-  ctx.fillStyle = 'rgba(255,255,255,0.3)'
+  ctx.moveTo(cx - bw, cy - bh)
+  ctx.lineTo(cx + 1, cy - bh)
+  ctx.lineTo(cx + pw, cy)
+  ctx.stroke()
+}
+
+function drawDataPin(ctx: CanvasRenderingContext2D, cx: number, cy: number, color: string) {
+  // Outer glow ring
+  ctx.beginPath()
+  ctx.arc(cx, cy, PIN_R + 3.5, 0, Math.PI * 2)
+  ctx.fillStyle = hexToRgba(color, 0.07)
   ctx.fill()
+
+  // Mid ring
+  ctx.beginPath()
+  ctx.arc(cx, cy, PIN_R + 1.5, 0, Math.PI * 2)
+  ctx.strokeStyle = hexToRgba(color, 0.25)
+  ctx.lineWidth = 1
+  ctx.stroke()
+
+  // Main filled circle
+  ctx.beginPath()
+  ctx.arc(cx, cy, PIN_R, 0, Math.PI * 2)
+
+  // Gradient fill
+  const grad = ctx.createRadialGradient(cx - 1.5, cy - 1.5, 0, cx, cy, PIN_R)
+  grad.addColorStop(0, lerpColor(color, '#ffffff', 0.3))
+  grad.addColorStop(1, color)
+  ctx.fillStyle = grad
+  ctx.fill()
+
+  // Rim light
+  ctx.strokeStyle = hexToRgba('#ffffff', 0.15)
+  ctx.lineWidth = 0.6
+  ctx.stroke()
 }
 
 /* ═══════════════════════════════════════════════════════════
-   Drawing — Nodes
+   Drawing — Nodes (multi-layer)
    ═══════════════════════════════════════════════════════════ */
 
-function drawNode(
-  ctx: CanvasRenderingContext2D,
-  node: FlowNode,
-  theme: FlowTheme,
-) {
+function drawNode(ctx: CanvasRenderingContext2D, node: FlowNode, theme: FlowTheme) {
   const x = node.position.x
   const y = node.position.y
   const w = node.width ?? NODE_W
   const h = nodeHeight(node)
   const accent = node.color ?? '#6c63ff'
 
-  // ── Shadow ──
+  // ── Drop shadow ──
   ctx.save()
   ctx.shadowColor = theme.node!.shadow!
-  ctx.shadowBlur = 32
-  ctx.shadowOffsetX = 0
-  ctx.shadowOffsetY = 10
-  ctx.fillStyle = theme.node!.background!
+  ctx.shadowBlur = 36
+  ctx.shadowOffsetY = 12
+  ctx.fillStyle = '#000'
+  ctx.globalAlpha = 0.4
   ctx.beginPath()
-  ctx.roundRect(x, y, w, h, CORNER)
+  ctx.roundRect(x + 2, y + 4, w - 4, h - 4, CORNER)
   ctx.fill()
   ctx.restore()
 
-  // ── Body fill (re-draw without shadow for crisp edge) ──
-  ctx.fillStyle = theme.node!.background!
+  // ── Body fill ──
+  const bodyGrad = ctx.createLinearGradient(x, y, x, y + h)
+  bodyGrad.addColorStop(0, theme.node!.background!)
+  bodyGrad.addColorStop(1, hexToRgba(theme.node!.background!, 0.92))
+  ctx.fillStyle = bodyGrad
   ctx.beginPath()
   ctx.roundRect(x, y, w, h, CORNER)
   ctx.fill()
+
+  // ── Accent glow bleed into body ──
+  ctx.save()
+  ctx.beginPath()
+  ctx.roundRect(x, y, w, h, CORNER)
+  ctx.clip()
+  const accentBleed = ctx.createRadialGradient(x, y + HEADER_H / 2, 0, x, y + HEADER_H / 2, 100)
+  accentBleed.addColorStop(0, hexToRgba(accent, 0.06))
+  accentBleed.addColorStop(1, 'transparent')
+  ctx.fillStyle = accentBleed
+  ctx.fillRect(x, y, w, h)
+  ctx.restore()
 
   // ── Border ──
   ctx.strokeStyle = theme.node!.border!
   ctx.lineWidth = 1
+  ctx.beginPath()
+  ctx.roundRect(x, y, w, h, CORNER)
   ctx.stroke()
+
+  // ── Top edge highlight ──
+  ctx.save()
+  ctx.beginPath()
+  ctx.roundRect(x, y, w, h, CORNER)
+  ctx.clip()
+  ctx.strokeStyle = 'rgba(255,255,255,0.06)'
+  ctx.lineWidth = 1
+  ctx.beginPath()
+  ctx.moveTo(x + CORNER, y + 0.5)
+  ctx.lineTo(x + w - CORNER, y + 0.5)
+  ctx.stroke()
+  ctx.restore()
 
   // ── Header ──
   ctx.save()
@@ -267,42 +424,69 @@ function drawNode(
   ctx.roundRect(x, y, w, HEADER_H, [CORNER, CORNER, 0, 0])
   ctx.clip()
 
-  // Header background
+  // Header base
   ctx.fillStyle = theme.node!.header!
   ctx.fillRect(x, y, w, HEADER_H)
 
-  // Accent strip (left)
+  // Header gradient wash from accent
+  const hdrGrad = ctx.createLinearGradient(x, y, x + w * 0.6, y)
+  hdrGrad.addColorStop(0, hexToRgba(accent, 0.15))
+  hdrGrad.addColorStop(0.5, hexToRgba(accent, 0.04))
+  hdrGrad.addColorStop(1, 'transparent')
+  ctx.fillStyle = hdrGrad
+  ctx.fillRect(x, y, w, HEADER_H)
+
+  // Top light on header
+  const topLight = ctx.createLinearGradient(x, y, x, y + 14)
+  topLight.addColorStop(0, 'rgba(255,255,255,0.04)')
+  topLight.addColorStop(1, 'transparent')
+  ctx.fillStyle = topLight
+  ctx.fillRect(x, y, w, 14)
+
+  // Accent strip
   ctx.fillStyle = accent
   ctx.fillRect(x, y, ACCENT_W, HEADER_H)
 
-  // Subtle accent glow on header
-  const headerGlow = ctx.createLinearGradient(x, y, x + 80, y)
-  headerGlow.addColorStop(0, hexToRgba(accent, 0.08))
-  headerGlow.addColorStop(1, 'transparent')
-  ctx.fillStyle = headerGlow
-  ctx.fillRect(x, y, w, HEADER_H)
+  // Accent strip glow
+  ctx.save()
+  ctx.shadowColor = accent
+  ctx.shadowBlur = 12
+  ctx.shadowOffsetX = 4
+  ctx.fillStyle = accent
+  ctx.globalAlpha = 0.4
+  ctx.fillRect(x, y + 4, ACCENT_W, HEADER_H - 8)
+  ctx.restore()
 
   ctx.restore()
 
   // ── Header separator ──
-  ctx.fillStyle = 'rgba(255,255,255,0.04)'
+  const sepGrad = ctx.createLinearGradient(x, y, x + w, y)
+  sepGrad.addColorStop(0, hexToRgba(accent, 0.2))
+  sepGrad.addColorStop(0.4, 'rgba(255,255,255,0.06)')
+  sepGrad.addColorStop(1, 'rgba(255,255,255,0.02)')
+  ctx.fillStyle = sepGrad
   ctx.fillRect(x, y + HEADER_H - 1, w, 1)
 
   // ── Title ──
+  ctx.save()
+  ctx.shadowColor = 'rgba(0,0,0,0.5)'
+  ctx.shadowBlur = 2
+  ctx.shadowOffsetY = 1
   ctx.fillStyle = theme.node!.text!
   ctx.font = '600 13px "Segoe UI", system-ui, sans-serif'
   ctx.textBaseline = 'middle'
   ctx.textAlign = 'left'
   ctx.fillText(node.label, x + ACCENT_W + 14, y + HEADER_H / 2 + 0.5)
+  ctx.restore()
 
   // ── Input pins ──
   node.inputs.forEach((pin, i) => {
     const py = y + PIN_Y0 + i * PIN_ROW
     const px = x
-    const color = pinColor(pin.type, theme)
 
+    const color = pinColor(pin.type, theme)
     if (pin.type === 'exec') {
-      drawExecPin(ctx, px, py, color)
+      drawExecPin(ctx, px - 3, py, color)
     } else {
       drawDataPin(ctx, px, py, color)
     }
@@ -320,10 +504,10 @@ function drawNode(
   node.outputs.forEach((pin, i) => {
     const py = y + PIN_Y0 + i * PIN_ROW
     const px = x + w
-    const color = pinColor(pin.type, theme)
 
+    const color = pinColor(pin.type, theme)
     if (pin.type === 'exec') {
-      drawExecPin(ctx, px, py, color)
+      drawExecPin(ctx, px - 5, py, color)
     } else {
       drawDataPin(ctx, px, py, color)
     }
@@ -339,105 +523,137 @@ function drawNode(
 }
 
 /* ═══════════════════════════════════════════════════════════
-   Drawing — Connections (bezier with glow)
+   Drawing — Connections (gradient bezier + flow particles)
    ═══════════════════════════════════════════════════════════ */
+
+function drawFlowParticles(
+  ctx: CanvasRenderingContext2D,
+  from: Vec2,
+  cp1: Vec2,
+  cp2: Vec2,
+  to: Vec2,
+  color: string,
+  time: number,
+) {
+  for (let i = 0; i < FLOW_PARTICLES; i++) {
+    const t = ((time * FLOW_SPEED + i / FLOW_PARTICLES) % 1)
+    const pos = cubicBezier(from, cp1, cp2, to, t)
+
+    // Fade at endpoints
+    const fade = Math.min(t * 6, (1 - t) * 6, 1)
+    if (fade <= 0) continue
+
+    // Glow
+    ctx.save()
+    ctx.globalAlpha = fade * 0.5
+    ctx.shadowColor = color
+    ctx.shadowBlur = 10
+    ctx.beginPath()
+    ctx.arc(pos.x, pos.y, 3, 0, Math.PI * 2)
+    ctx.fillStyle = color
+    ctx.fill()
+    ctx.restore()
+
+    // Bright core
+    ctx.save()
+    ctx.globalAlpha = fade * 0.9
+    ctx.beginPath()
+    ctx.arc(pos.x, pos.y, 1.5, 0, Math.PI * 2)
+    ctx.fillStyle = '#ffffff'
+    ctx.fill()
+    ctx.restore()
+  }
+}
 
 function drawConnection(
   ctx: CanvasRenderingContext2D,
-  from: { x: number; y: number },
-  to: { x: number; y: number },
-  color: string,
+  from: Vec2,
+  to: Vec2,
+  fromColor: string,
+  toColor: string,
   lineWidth: number,
   glowSize: number,
   glowOpacity: number,
+  time: number,
 ) {
-  const dx = Math.abs(to.x - from.x)
-  const cp = Math.max(dx * 0.45, 70)
+  const [cp1, cp2] = bezierControlPoints(from, to)
 
+  // Gradient for the line
+  const grad = ctx.createLinearGradient(from.x, from.y, to.x, to.y)
+  grad.addColorStop(0, fromColor)
+  grad.addColorStop(1, toColor)
+
+  // Shadow pass
+  ctx.save()
+  ctx.shadowColor = 'rgba(0,0,0,0.35)'
+  ctx.shadowBlur = 8
+  ctx.shadowOffsetY = 4
   ctx.beginPath()
   ctx.moveTo(from.x, from.y)
-  ctx.bezierCurveTo(
-    from.x + cp, from.y,
-    to.x - cp, to.y,
-    to.x, to.y,
-  )
+  ctx.bezierCurveTo(cp1.x, cp1.y, cp2.x, cp2.y, to.x, to.y)
+  ctx.strokeStyle = 'rgba(0,0,0,0.01)'
+  ctx.lineWidth = lineWidth + 2
+  ctx.lineCap = 'round'
+  ctx.stroke()
+  ctx.restore()
 
   // Glow pass
   ctx.save()
-  ctx.shadowColor = color
-  ctx.shadowBlur = glowSize
   ctx.globalAlpha = glowOpacity
-  ctx.strokeStyle = color
-  ctx.lineWidth = lineWidth + 4
+  ctx.shadowColor = fromColor
+  ctx.shadowBlur = glowSize
+  ctx.beginPath()
+  ctx.moveTo(from.x, from.y)
+  ctx.bezierCurveTo(cp1.x, cp1.y, cp2.x, cp2.y, to.x, to.y)
+  ctx.strokeStyle = grad
+  ctx.lineWidth = lineWidth + 5
   ctx.lineCap = 'round'
   ctx.stroke()
   ctx.restore()
 
   // Main line
-  ctx.strokeStyle = color
+  ctx.beginPath()
+  ctx.moveTo(from.x, from.y)
+  ctx.bezierCurveTo(cp1.x, cp1.y, cp2.x, cp2.y, to.x, to.y)
+  ctx.strokeStyle = grad
   ctx.lineWidth = lineWidth
   ctx.lineCap = 'round'
   ctx.stroke()
 
-  // Endpoint dots
-  const dotR = lineWidth * 0.8
-  for (const pt of [from, to]) {
-    ctx.beginPath()
-    ctx.arc(pt.x, pt.y, dotR, 0, Math.PI * 2)
-    ctx.fillStyle = color
-    ctx.fill()
-  }
+  // Flow particles
+  drawFlowParticles(ctx, from, cp1, cp2, to, fromColor, time)
 }
 
 function drawConnections(
   ctx: CanvasRenderingContext2D,
   model: GraphModel,
   theme: FlowTheme,
+  time: number,
 ) {
   const nodes = model.getNodes()
-  const connections = model.getConnections()
 
-  for (const conn of connections) {
+  for (const conn of model.getConnections()) {
     const fromNode = nodes.find(n => n.id === conn.fromNodeId)
     const toNode = nodes.find(n => n.id === conn.toNodeId)
     if (!fromNode || !toNode) continue
 
-    const fromPos = pinPos(fromNode, conn.fromPinId, true)
-    const toPos = pinPos(toNode, conn.toPinId, false)
-    if (!fromPos || !toPos) continue
+    const fromP = pinPos(fromNode, conn.fromPinId, true)
+    const toP = pinPos(toNode, conn.toPinId, false)
+    if (!fromP || !toP) continue
 
     const fromPin = fromNode.outputs.find(p => p.id === conn.fromPinId)
-    const color = fromPin
-      ? pinColor(fromPin.type, theme)
-      : '#6c63ff'
+    const toPin = toNode.inputs.find(p => p.id === conn.toPinId)
+    const fromC = fromPin ? pinColor(fromPin.type, theme) : '#6c63ff'
+    const toC = toPin ? pinColor(toPin.type, theme) : fromC
 
     drawConnection(
-      ctx,
-      fromPos,
-      toPos,
-      color,
+      ctx, fromP, toP, fromC, toC,
       theme.connection!.width as number,
       theme.connection!.glowSize as number,
       theme.connection!.glowOpacity as number,
+      time,
     )
   }
-}
-
-/* ═══════════════════════════════════════════════════════════
-   Drawing — Vignette
-   ═══════════════════════════════════════════════════════════ */
-
-function drawVignette(
-  ctx: CanvasRenderingContext2D,
-  w: number,
-  h: number,
-) {
-  const grd = ctx.createRadialGradient(w / 2, h / 2, 0, w / 2, h / 2, Math.max(w, h) * 0.65)
-  grd.addColorStop(0, 'rgba(255,255,255,0.008)')
-  grd.addColorStop(0.6, 'transparent')
-  grd.addColorStop(1, 'rgba(0,0,0,0.15)')
-  ctx.fillStyle = grd
-  ctx.fillRect(0, 0, w, h)
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -450,28 +666,23 @@ function renderCanvas(
   h: number,
   model: GraphModel,
   theme: FlowTheme,
+  noise: CanvasPattern | null,
+  time: number,
 ) {
-  // 1 — Background
-  ctx.fillStyle = theme.canvas!.background!
-  ctx.fillRect(0, 0, w, h)
+  // 1 — Background + grid + vignette
+  drawBackground(ctx, w, h, theme, noise)
 
-  // 2 — Grid dots
-  drawGrid(ctx, w, h, theme.canvas!.grid!, theme.canvas!.gridMajor!)
+  // 2 — Connections (behind nodes)
+  drawConnections(ctx, model, theme, time)
 
-  // 3 — Vignette
-  drawVignette(ctx, w, h)
-
-  // 4 — Connections (behind nodes)
-  drawConnections(ctx, model, theme)
-
-  // 5 — Nodes
+  // 3 — Nodes
   for (const node of model.getNodes()) {
     drawNode(ctx, node, theme)
   }
 }
 
 /* ═══════════════════════════════════════════════════════════
-   React Component
+   React component — animated render loop
    ═══════════════════════════════════════════════════════════ */
 
 export const FlowCanvas: React.FC<FlowCanvasProps> = ({
@@ -483,12 +694,9 @@ export const FlowCanvas: React.FC<FlowCanvasProps> = ({
   height = '600px',
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null)
-  const modelRef = useRef<GraphModel>(GraphModel.fromJSON(graph))
-
-  // Sync model when graph prop changes
-  useEffect(() => {
-    modelRef.current = GraphModel.fromJSON(graph)
-  }, [graph])
+  const frameRef = useRef<number>(0)
+  const noiseRef = useRef<CanvasPattern | null>(null)
+  const dimRef = useRef({ w: 0, h: 0 })
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -497,38 +705,49 @@ export const FlowCanvas: React.FC<FlowCanvasProps> = ({
     if (!ctx) return
 
     const theme = buildTheme(themeProp)
+    const model = GraphModel.fromJSON(graph)
 
-    // HiDPI support
-    const rect = canvas.getBoundingClientRect()
+    // Create noise texture once
+    if (!noiseRef.current) {
+      noiseRef.current = createNoisePattern(ctx)
+    }
+
     const dpr = window.devicePixelRatio || 1
-    canvas.width = rect.width * dpr
-    canvas.height = rect.height * dpr
-    ctx.scale(dpr, dpr)
 
-    renderCanvas(ctx, rect.width, rect.height, modelRef.current, theme)
-  }, [graph, themeProp])
+    // Size the canvas
+    function resize() {
+      const rect = canvas!.getBoundingClientRect()
+      dimRef.current = { w: rect.width, h: rect.height }
+      canvas!.width = rect.width * dpr
+      canvas!.height = rect.height * dpr
+    }
+    resize()
 
-  // Re-render on resize
-  useEffect(() => {
-    const canvas = canvasRef.current
-    if (!canvas) return
-
-    const observer = new ResizeObserver(() => {
-      const ctx = canvas.getContext('2d')
-      if (!ctx) return
-
-      const theme = buildTheme(themeProp)
-      const rect = canvas.getBoundingClientRect()
-      const dpr = window.devicePixelRatio || 1
-      canvas.width = rect.width * dpr
-      canvas.height = rect.height * dpr
-      ctx.scale(dpr, dpr)
-
-      renderCanvas(ctx, rect.width, rect.height, modelRef.current, theme)
-    })
-
+    const observer = new ResizeObserver(resize)
     observer.observe(canvas)
-    return () => observer.disconnect()
+
+    // Animation loop
+    const startTime = performance.now()
+
+    function animate() {
+      const elapsed = (performance.now() - startTime) / 1000
+      const { w, h } = dimRef.current
+      if (w === 0 || h === 0) {
+        frameRef.current = requestAnimationFrame(animate)
+        return
+      }
+
+      ctx!.setTransform(dpr, 0, 0, dpr, 0, 0)
+      renderCanvas(ctx!, w, h, model, theme, noiseRef.current, elapsed)
+      frameRef.current = requestAnimationFrame(animate)
+    }
+
+    frameRef.current = requestAnimationFrame(animate)
+
+    return () => {
+      cancelAnimationFrame(frameRef.current)
+      observer.disconnect()
+    }
   }, [graph, themeProp])
 
   return (
