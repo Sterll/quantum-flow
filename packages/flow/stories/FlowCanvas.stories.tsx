@@ -98,9 +98,9 @@ export const CrimsonTheme: Story = {
     width: 960,
     height: 460,
     theme: {
-      canvas: { background: '#0a0508', grid: 'rgba(255,100,100,0.025)', gridMajor: 'rgba(255,100,100,0.06)' },
-      node: { background: '#1a0e12', border: 'rgba(255,80,80,0.1)', header: '#220f14', text: '#f0d0d8', subtext: '#8a5a6a' },
-      connection: { width: 3, glowOpacity: 0.25 },
+      canvas: { background: '#0a0508', dotColor: 'rgba(255,100,100,0.03)' },
+      node: { background: '#1a0e12', border: 'rgba(255,80,80,0.08)', text: '#f0d0d8', subtext: '#8a5a6a' },
+      connection: { width: 2 },
     },
   },
 }
