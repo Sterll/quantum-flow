@@ -5,6 +5,7 @@ import type { NodeDefinitionWithFactory } from '../define/defineNode'
 import { NodeRegistry } from '../define/NodeRegistry'
 import { useGraphStore } from './useGraphStore'
 import { useHistory, type UseHistoryAPI } from './useHistory'
+import { useClipboard } from './useClipboard'
 import type { GraphStore } from '../model/GraphStore'
 
 export interface UseFlowEditorOptions {
@@ -35,6 +36,11 @@ export interface FlowEditorAPI {
   getNodes(): FlowNode[]
   getConnections(): FlowConnection[]
   getConnectionsForNode(nodeId: string): FlowConnection[]
+
+  copy(nodeIds: Set<string> | string[]): void
+  cut(nodeIds: Set<string> | string[]): void
+  paste(offset?: { x: number; y: number }): FlowNode[]
+  canPaste: boolean
 
   toJSON(): FlowGraph
   fromJSON(graph: FlowGraph): void
@@ -89,6 +95,8 @@ export function useFlowEditor(options?: UseFlowEditorOptions): FlowEditorAPI {
   const getNodes = useCallback(() => store.getNodes(), [store])
   const getConnections = useCallback(() => store.getConnections(), [store])
   const getConnectionsForNode = useCallback((nodeId: string) => store.getConnectionsForNode(nodeId), [store])
+  const clipboard = useClipboard(store)
+
   const toJSON = useCallback(() => store.getState(), [store])
   const fromJSON = useCallback((graph: FlowGraph) => store.importGraph(graph), [store])
 
@@ -110,6 +118,10 @@ export function useFlowEditor(options?: UseFlowEditorOptions): FlowEditorAPI {
     getNodes,
     getConnections,
     getConnectionsForNode,
+    copy: clipboard.copy,
+    cut: clipboard.cut,
+    paste: clipboard.paste,
+    canPaste: clipboard.canPaste,
     toJSON,
     fromJSON,
     registry,

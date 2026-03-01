@@ -254,4 +254,42 @@ describe('useFlowEditor', () => {
     expect(result.current.getConnectionsForNode('n1')).toHaveLength(1)
     expect(result.current.getConnectionsForNode('n3')).toHaveLength(0)
   })
+
+  it('copy/paste duplicates selected nodes', () => {
+    const { result } = renderHook(() => useFlowEditor())
+    act(() => {
+      result.current.addNode(makeNode('n1'))
+    })
+    act(() => {
+      result.current.copy(['n1'])
+    })
+    expect(result.current.canPaste).toBe(true)
+    let pasted: FlowNode[] = []
+    act(() => {
+      pasted = result.current.paste()
+    })
+    expect(pasted).toHaveLength(1)
+    expect(result.current.getNodes()).toHaveLength(2)
+  })
+
+  it('cut removes nodes and paste restores them', () => {
+    const { result } = renderHook(() => useFlowEditor())
+    act(() => {
+      result.current.addNode(makeNode('n1'))
+    })
+    act(() => {
+      result.current.cut(['n1'])
+    })
+    expect(result.current.getNodes()).toHaveLength(0)
+    expect(result.current.canPaste).toBe(true)
+    act(() => {
+      result.current.paste()
+    })
+    expect(result.current.getNodes()).toHaveLength(1)
+  })
+
+  it('canPaste is false initially', () => {
+    const { result } = renderHook(() => useFlowEditor())
+    expect(result.current.canPaste).toBe(false)
+  })
 })
