@@ -1,4 +1,5 @@
 export * from './useViewport'
 export * from './useNodeDrag'
 export * from './useSelection'
+export * from './useConnection'
 export * from './useHotkeys'
