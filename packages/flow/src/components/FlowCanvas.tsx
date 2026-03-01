@@ -256,22 +256,18 @@ function drawNode(ctx: CanvasRenderingContext2D, node: FlowNode, theme: FlowThem
   ctx.lineTo(x + w, y + HEADER_H)
   ctx.stroke()
 
+  // Accent dot
+  ctx.beginPath()
+  ctx.arc(x + 12, y + HEADER_H / 2, 2.5, 0, Math.PI * 2)
+  ctx.fillStyle = accent
+  ctx.fill()
+
   // Title
   ctx.fillStyle = theme.node!.text!
   ctx.font = '600 12px -apple-system, "Segoe UI", system-ui, sans-serif'
   ctx.textBaseline = 'middle'
   ctx.textAlign = 'left'
-  ctx.fillText(node.label, x + 14, y + HEADER_H / 2)
-
-  // Accent dot next to title
-  ctx.beginPath()
-  ctx.arc(x + 10, y + HEADER_H / 2, 2.5, 0, Math.PI * 2)
-  ctx.fillStyle = accent
-  ctx.fill()
-
-  // Re-position title after dot
-  ctx.fillStyle = theme.node!.text!
-  ctx.fillText(node.label, x + 18, y + HEADER_H / 2)
+  ctx.fillText(node.label, x + 20, y + HEADER_H / 2)
 
   // Input pins
   node.inputs.forEach((pin, i) => {
