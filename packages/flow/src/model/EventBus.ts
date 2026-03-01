@@ -1,6 +1,6 @@
 type Handler<T> = (payload: T) => void
 
-export class EventBus<Events extends Record<string, unknown>> {
+export class EventBus<Events extends { [K in keyof Events]: Events[K] }> {
   private listeners = new Map<keyof Events, Set<Handler<any>>>()
 
   on<K extends keyof Events>(event: K, handler: Handler<Events[K]>): () => void {

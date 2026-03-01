@@ -1,7 +1,7 @@
 import React, { useRef, useEffect } from 'react'
 import type { FlowGraph, FlowNode, FlowPin } from '../types'
 import type { NodeDefinitionWithFactory } from '../define'
-import { GraphModel } from '../model/GraphModel'
+import { GraphStore } from '../model/GraphStore'
 
 /* ══════════════════════════════════════════════════════════════
    FlowCanvas — Claude Terminal WorkflowGraphEngine port
@@ -316,7 +316,7 @@ function drawNode(
 
 /* ── connections (from Claude Terminal _drawLinks) ── */
 
-function drawConnections(ctx: CanvasRenderingContext2D, model: GraphModel, theme: FlowTheme) {
+function drawConnections(ctx: CanvasRenderingContext2D, model: GraphStore, theme: FlowTheme) {
   const nodes = model.getNodes()
 
   ctx.save()
@@ -360,7 +360,7 @@ function renderCanvas(
   ctx: CanvasRenderingContext2D,
   w: number,
   h: number,
-  model: GraphModel,
+  model: GraphStore,
   theme: FlowTheme,
   connectedPins: Set<string>,
 ) {
@@ -383,7 +383,8 @@ export const FlowCanvas: React.FC<FlowCanvasProps> = ({ graph, theme: customThem
     if (!ctx) return
 
     const theme = buildTheme(customTheme)
-    const model = GraphModel.fromJSON(graph)
+    const model = new GraphStore()
+    model.importGraph(graph)
     const connectedPins = buildConnectedPins(graph)
     const dpr = window.devicePixelRatio || 1
 
