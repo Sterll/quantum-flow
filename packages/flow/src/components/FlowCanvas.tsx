@@ -511,5 +511,6 @@ export const FlowCanvas: React.FC<FlowCanvasProps> = ({
     height: typeof height === 'number' ? `${height}px` : height,
     display: 'block',
     outline: 'none',
+    touchAction: 'none',
   }} />
 }

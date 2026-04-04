@@ -65,7 +65,7 @@ export function useCanvasInteraction(
   }, [])
 
   const attach = useCallback((canvas: HTMLCanvasElement): (() => void) => {
-    const getWorldPos = (e: MouseEvent) => {
+    const getWorldPos = (e: MouseEvent | Touch) => {
       const rect = canvas.getBoundingClientRect()
       const sx = e.clientX - rect.left
       const sy = e.clientY - rect.top
@@ -239,6 +239,165 @@ export function useCanvasInteraction(
       markDirty()
     }
 
+    /* ── Touch support ── */
+
+    // Track pinch state for two-finger zoom
+    const pinchState = { active: false, initialDist: 0, initialZoom: 1 }
+    const lastTouchPos = { value: null as { x: number; y: number } | null }
+
+    const getTouchDist = (t1: Touch, t2: Touch) =>
+      Math.hypot(t2.clientX - t1.clientX, t2.clientY - t1.clientY)
+
+    const onTouchStart = (e: TouchEvent) => {
+      if (options?.readOnly && e.touches.length === 1) return
+
+      // Two-finger pinch-zoom
+      if (e.touches.length === 2) {
+        e.preventDefault()
+        pinchState.active = true
+        pinchState.initialDist = getTouchDist(e.touches[0], e.touches[1])
+        pinchState.initialZoom = viewport.ref.current.zoom
+        // Also use two-finger for panning
+        const midX = (e.touches[0].clientX + e.touches[1].clientX) / 2
+        const midY = (e.touches[0].clientY + e.touches[1].clientY) / 2
+        panStart.current = { x: midX, y: midY }
+        isPanning.current = true
+        return
+      }
+
+      if (e.touches.length !== 1) return
+      e.preventDefault()
+
+      const touch = e.touches[0]
+      const { world } = getWorldPos(touch)
+      const nodes = store.getNodes()
+
+      // Check pins
+      const pinHit = hitTestPin(world, nodes)
+      if (pinHit) {
+        connection.startConnection(pinHit)
+        markDirty()
+        return
+      }
+
+      // Check nodes
+      const nodeHit = hitTestNode(world, nodes)
+      if (nodeHit) {
+        if (!selectedRef.current.has(nodeHit.id)) {
+          selection.select(nodeHit.id)
+        }
+        nodeDrag.startDrag(nodeHit.id, world)
+        markDirty()
+        return
+      }
+
+      // Empty area - clear selection
+      selection.clear()
+      lastTouchPos.value = { x: touch.clientX, y: touch.clientY }
+      isPanning.current = true
+      panStart.current = { x: touch.clientX, y: touch.clientY }
+      markDirty()
+    }
+
+    const onTouchMove = (e: TouchEvent) => {
+      e.preventDefault()
+
+      // Two-finger pinch-zoom
+      if (e.touches.length === 2 && pinchState.active) {
+        const dist = getTouchDist(e.touches[0], e.touches[1])
+        const scale = dist / pinchState.initialDist
+        const rect = canvas.getBoundingClientRect()
+        const midX = (e.touches[0].clientX + e.touches[1].clientX) / 2 - rect.left
+        const midY = (e.touches[0].clientY + e.touches[1].clientY) / 2 - rect.top
+        viewport.zoomAt(pinchState.initialZoom * scale, midX, midY)
+
+        // Pan with midpoint
+        const currentMidX = (e.touches[0].clientX + e.touches[1].clientX) / 2
+        const currentMidY = (e.touches[0].clientY + e.touches[1].clientY) / 2
+        const dx = currentMidX - panStart.current.x
+        const dy = currentMidY - panStart.current.y
+        panStart.current = { x: currentMidX, y: currentMidY }
+        viewport.pan(dx, dy)
+        markDirty()
+        return
+      }
+
+      if (e.touches.length !== 1) return
+      const touch = e.touches[0]
+      const { world } = getWorldPos(touch)
+
+      // Node dragging
+      if (draggingRef.current) {
+        nodeDrag.moveDrag(world)
+        markDirty()
+        return
+      }
+
+      // Connection dragging
+      if (draftRef.current) {
+        connection.updateDraft(world)
+        markDirty()
+        return
+      }
+
+      // Single-finger pan on empty area
+      if (isPanning.current) {
+        const dx = touch.clientX - panStart.current.x
+        const dy = touch.clientY - panStart.current.y
+        panStart.current = { x: touch.clientX, y: touch.clientY }
+        viewport.pan(dx, dy)
+        markDirty()
+        return
+      }
+    }
+
+    const onTouchEnd = (e: TouchEvent) => {
+      // End pinch
+      if (pinchState.active && e.touches.length < 2) {
+        pinchState.active = false
+        if (e.touches.length === 0) {
+          isPanning.current = false
+        }
+        markDirty()
+        return
+      }
+
+      if (e.touches.length > 0) return
+
+      // End node drag
+      if (draggingRef.current) {
+        nodeDrag.endDrag()
+        markDirty()
+        return
+      }
+
+      // End connection
+      if (draftRef.current) {
+        if (e.changedTouches.length > 0) {
+          const touch = e.changedTouches[0]
+          const { world } = getWorldPos(touch)
+          const nodes = store.getNodes()
+          const pinHit = hitTestPin(world, nodes)
+          if (pinHit) {
+            connection.finishConnection(pinHit)
+          } else {
+            connection.cancelConnection()
+          }
+        } else {
+          connection.cancelConnection()
+        }
+        markDirty()
+        return
+      }
+
+      // End pan
+      isPanning.current = false
+      lastTouchPos.value = null
+      markDirty()
+    }
+
+    /* ── Attach all listeners ── */
+
     canvas.addEventListener('mousedown', onMouseDown)
     canvas.addEventListener('mousemove', onMouseMove)
     canvas.addEventListener('mouseup', onMouseUp)
@@ -246,6 +405,9 @@ export function useCanvasInteraction(
     canvas.addEventListener('contextmenu', onContextMenu)
     canvas.setAttribute('tabindex', '0')
     canvas.addEventListener('keydown', onKeyDown)
+    canvas.addEventListener('touchstart', onTouchStart, { passive: false })
+    canvas.addEventListener('touchmove', onTouchMove, { passive: false })
+    canvas.addEventListener('touchend', onTouchEnd)
 
     return () => {
       canvas.removeEventListener('mousedown', onMouseDown)
@@ -254,6 +416,9 @@ export function useCanvasInteraction(
       canvas.removeEventListener('wheel', onWheel)
       canvas.removeEventListener('contextmenu', onContextMenu)
       canvas.removeEventListener('keydown', onKeyDown)
+      canvas.removeEventListener('touchstart', onTouchStart)
+      canvas.removeEventListener('touchmove', onTouchMove)
+      canvas.removeEventListener('touchend', onTouchEnd)
     }
   }, [store, viewport, nodeDrag, connection, selection, hotkeys, options?.readOnly, markDirty])
 
