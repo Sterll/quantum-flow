@@ -1,4 +1,14 @@
+import type { ComponentType } from 'react'
 import type { FlowNode, FlowPin, FlowNodePosition } from '../types'
+
+export interface NodeOverlayProps {
+  nodeId: string
+  data: Record<string, unknown>
+  updateData: (patch: Record<string, unknown>) => void
+  width: number
+  height: number
+  selected: boolean
+}
 
 export interface NodeDefinition {
   type: string
@@ -9,6 +19,7 @@ export interface NodeDefinition {
   inputs: FlowPin[]
   outputs: FlowPin[]
   defaultData?: Record<string, unknown>
+  component?: ComponentType<NodeOverlayProps>
 }
 
 export interface NodeDefinitionWithFactory extends NodeDefinition {

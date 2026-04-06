@@ -8,6 +8,8 @@ import type { Rect } from '../hooks/useSelection'
 import type { AlignmentGuide } from '../hooks/useNodeDrag'
 import { Minimap } from './Minimap'
 import { SearchPalette, type SearchPaletteItem } from './SearchPalette'
+import { NodeOverlayLayer } from './NodeOverlayLayer'
+import type { NodeRegistry } from '../define/NodeRegistry'
 import type { PinTypeRegistry } from '../plugin/PinTypeRegistry'
 import {
   NODE_W, TITLE_H, SLOT_H, PIN_Y0, CORNER, PIN_R, EXEC_R, GRID,
@@ -51,6 +53,7 @@ export interface FlowCanvasProps {
     onSelect: (item: SearchPaletteItem, worldPos: { x: number; y: number }) => void
   }
   pinTypes?: PinTypeRegistry
+  registry?: NodeRegistry
   width?: number | string
   height?: number | string
 }
@@ -712,6 +715,7 @@ export const FlowCanvas: React.FC<FlowCanvasProps> = ({
   onGroup,
   searchPalette,
   pinTypes: pinTypesRegistry,
+  registry,
   width = '100%',
   height = '600px',
 }) => {
@@ -939,6 +943,14 @@ export const FlowCanvas: React.FC<FlowCanvasProps> = ({
   return (
     <div style={{ position: 'relative', width: canvasStyle.width, height: canvasStyle.height }}>
       <canvas ref={canvasRef} style={{ ...canvasStyle, width: '100%', height: '100%' }} />
+      {registry && (
+        <NodeOverlayLayer
+          store={store}
+          registry={registry}
+          viewport={interaction.viewport}
+          selectedIds={interaction.selectedRef}
+        />
+      )}
       {showMinimap && (
         <Minimap
           store={store}
