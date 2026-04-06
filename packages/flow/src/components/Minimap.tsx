@@ -26,7 +26,7 @@ export const Minimap: React.FC<MinimapProps> = ({
   canvasSize,
   width = MINIMAP_W,
   height = MINIMAP_H,
-  theme,
+  theme: _theme,
   style,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null)

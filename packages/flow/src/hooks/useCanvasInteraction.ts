@@ -6,8 +6,8 @@ import { useNodeDrag, type NodeDragAPI, type AlignmentGuide } from './useNodeDra
 import { useConnection, type ConnectionAPI, type DraftConnection } from './useConnection'
 import { useSelection, type SelectionAPI, type Rect } from './useSelection'
 import { useHotkeys } from './useHotkeys'
-import { hitTestPin, hitTestNode, hitTestGroup, hitTestWaypoint, hitTestConnectionSegment, nodeHeight, GROUP_NODE_TYPE } from './hitTest'
-import { NODE_W, SLOT_H, PIN_Y0, BEZIER_MIN_OFFSET } from '../constants'
+import { hitTestPin, hitTestNode, hitTestGroup, hitTestWaypoint, hitTestConnectionSegment, nodeHeight } from './hitTest'
+import { NODE_W, SLOT_H, PIN_Y0 } from '../constants'
 
 const ZOOM_FACTOR = 1.1
 

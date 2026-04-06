@@ -128,13 +128,19 @@ export class HistoryManager {
   }
 
   private labelFromEvent(event: string, payload: unknown): string {
-    const p = payload as Record<string, any>
+    const p = payload as Record<string, Record<string, unknown> | string | undefined>
     switch (event) {
-      case 'node:added': return `Added node '${p.node?.label ?? p.node?.id}'`
+      case 'node:added': {
+        const node = p.node as Record<string, unknown> | undefined
+        return `Added node '${node?.label ?? node?.id}'`
+      }
       case 'node:removed': return `Removed node '${p.nodeId}'`
       case 'node:moved': return `Moved node '${p.nodeId}'`
       case 'node:dataChanged': return `Updated data on '${p.nodeId}'`
-      case 'connection:added': return `Connected ${p.connection?.fromNodeId} -> ${p.connection?.toNodeId}`
+      case 'connection:added': {
+        const conn = p.connection as Record<string, unknown> | undefined
+        return `Connected ${conn?.fromNodeId} -> ${conn?.toNodeId}`
+      }
       case 'connection:removed': return `Removed connection '${p.connectionId}'`
       case 'graph:cleared': return 'Cleared graph'
       case 'graph:imported': return 'Imported graph'

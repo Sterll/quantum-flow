@@ -10,9 +10,9 @@ export interface GraphEvents {
   'connection:added': { connection: FlowConnection }
   'connection:removed': { connectionId: string }
   'connection:updated': { connection: FlowConnection }
-  'graph:cleared': {}
+  'graph:cleared': Record<string, never>
   'graph:imported': { graph: FlowGraph }
-  'batch:start': {}
+  'batch:start': Record<string, never>
   'batch:end': { events: Array<{ type: string; payload: unknown }> }
 }
 
@@ -181,8 +181,8 @@ export class GraphStore {
     if (!this.validator) return
     const result = this.validator.validate({
       graph: this.getState(),
-      action: action as any,
-      payload: payload as any,
+      action: action as never,
+      payload: payload as never,
     })
     if (!result.valid) {
       throw new Error(result.reason)

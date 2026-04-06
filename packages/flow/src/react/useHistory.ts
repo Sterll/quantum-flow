@@ -17,6 +17,7 @@ export interface UseHistoryAPI {
 export function useHistory(store: GraphStore, options?: UseHistoryOptions): UseHistoryAPI {
   const manager = useMemo(
     () => new HistoryManager(store, { maxSize: options?.maxSize }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [store],
   )
 

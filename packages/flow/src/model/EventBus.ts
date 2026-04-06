@@ -1,6 +1,7 @@
 type Handler<T> = (payload: T) => void
 
 export class EventBus<Events extends { [K in keyof Events]: Events[K] }> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private listeners = new Map<keyof Events, Set<Handler<any>>>()
 
   on<K extends keyof Events>(event: K, handler: Handler<Events[K]>): () => void {
