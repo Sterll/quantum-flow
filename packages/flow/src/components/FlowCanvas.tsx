@@ -8,6 +8,7 @@ import type { Rect } from '../hooks/useSelection'
 import type { AlignmentGuide } from '../hooks/useNodeDrag'
 import { Minimap } from './Minimap'
 import { SearchPalette, type SearchPaletteItem } from './SearchPalette'
+import type { PinTypeRegistry } from '../plugin/PinTypeRegistry'
 import {
   NODE_W, TITLE_H, SLOT_H, PIN_Y0, CORNER, PIN_R, EXEC_R, GRID,
   GROUP_HEADER_H, BEZIER_MIN_OFFSET,
@@ -49,6 +50,7 @@ export interface FlowCanvasProps {
     items: SearchPaletteItem[]
     onSelect: (item: SearchPaletteItem, worldPos: { x: number; y: number }) => void
   }
+  pinTypes?: PinTypeRegistry
   width?: number | string
   height?: number | string
 }
@@ -88,7 +90,11 @@ function rgba(hex: string, a: number): string {
   return `rgba(${r},${g},${b},${a})`
 }
 
-function pColor(type: string, t: FlowTheme): string {
+function pColor(type: string, t: FlowTheme, ptr?: PinTypeRegistry | null): string {
+  if (ptr) {
+    const info = ptr.get(type)
+    if (info) return info.color
+  }
   return t.pin?.[type] ?? PIN_PALETTE[type] ?? '#6b7280'
 }
 
@@ -324,6 +330,7 @@ function drawPins(
   conns: Set<string>,
   hPin: HoverPin | null,
   draftInfo: DraftPinInfo | null,
+  ptr?: PinTypeRegistry | null,
 ) {
   const x = node.position.x
   const y = node.position.y
@@ -332,7 +339,7 @@ function drawPins(
   const draw = (pin: FlowPin, idx: number, isOut: boolean) => {
     const py = y + PIN_Y0 + idx * SLOT_H + SLOT_H * 0.5
     const px = isOut ? x + w : x
-    const color = pColor(pin.type, t)
+    const color = pColor(pin.type, t, ptr)
     const filled = conns.has(`${node.id}:${pin.id}:${isOut ? 'o' : 'i'}`)
     const hover = hPin != null && hPin.pinId === pin.id && hPin.isOutput === isOut
 
@@ -395,6 +402,7 @@ function drawNode(
   hovered: boolean,
   hPin: HoverPin | null,
   draftInfo: DraftPinInfo | null,
+  ptr?: PinTypeRegistry | null,
 ) {
   if (node.type === GROUP_NODE_TYPE) return
 
@@ -511,7 +519,7 @@ function drawNode(
     ctx.fillText(badgeText, bx + bw * 0.5, by + bh * 0.5)
   }
 
-  drawPins(ctx, node, t, conns, hPin, draftInfo)
+  drawPins(ctx, node, t, conns, hPin, draftInfo, ptr)
 }
 
 /* -- connections (with waypoints + animation) -- */
@@ -536,6 +544,7 @@ function drawConnections(
   nodeMap: Map<string, FlowNode>,
   t: FlowTheme,
   execDashOffset: number | null,
+  ptr?: PinTypeRegistry | null,
 ) {
   const lw = t.connection!.width as number
 
@@ -554,8 +563,8 @@ function drawConnections(
 
     const fromPin = fn.outputs.find(p => p.id === conn.fromPinId)
     const toPin = tn.inputs.find(p => p.id === conn.toPinId)
-    const fc = pColor(fromPin?.type ?? 'exec', t)
-    const tc = pColor(toPin?.type ?? 'exec', t)
+    const fc = pColor(fromPin?.type ?? 'exec', t, ptr)
+    const tc = pColor(toPin?.type ?? 'exec', t, ptr)
     const isExec = fromPin?.type === 'exec'
 
     // Animated dashes for exec connections
@@ -588,13 +597,14 @@ function drawWaypointHandles(
   nodes: FlowNode[],
   t: FlowTheme,
   selectedWpId: string | null,
+  ptr?: PinTypeRegistry | null,
 ) {
   for (const conn of connections) {
     if (!conn.waypoints || conn.waypoints.length === 0) continue
     const fn = nodes.find(n => n.id === conn.fromNodeId)
     if (!fn) continue
     const fromPin = fn.outputs.find(p => p.id === conn.fromPinId)
-    const color = pColor(fromPin?.type ?? 'exec', t)
+    const color = pColor(fromPin?.type ?? 'exec', t, ptr)
 
     for (const wp of conn.waypoints) {
       const isSel = wp.id === selectedWpId
@@ -612,7 +622,7 @@ function drawWaypointHandles(
 
 /* -- draft connection -- */
 
-function drawDraft(ctx: CanvasRenderingContext2D, draft: DraftConnection, t: FlowTheme) {
+function drawDraft(ctx: CanvasRenderingContext2D, draft: DraftConnection, _t: FlowTheme) {
   ctx.save()
   ctx.lineWidth = 1.5
   ctx.lineCap = 'round'
@@ -701,6 +711,7 @@ export const FlowCanvas: React.FC<FlowCanvasProps> = ({
   animateConnections,
   onGroup,
   searchPalette,
+  pinTypes: pinTypesRegistry,
   width = '100%',
   height = '600px',
 }) => {
@@ -786,13 +797,13 @@ export const FlowCanvas: React.FC<FlowCanvasProps> = ({
         // Draw connections
         const connections = store.getConnections()
         const nodeMap = new Map(nodes.map(n => [n.id, n]))
-        drawConnections(offCtx, nodes, connections, nodeMap, theme, null)
+        drawConnections(offCtx, nodes, connections, nodeMap, theme, null, pinTypesRegistry)
         // Draw waypoint handles
-        drawWaypointHandles(offCtx, connections, nodes, theme, null)
+        drawWaypointHandles(offCtx, connections, nodes, theme, null, pinTypesRegistry)
         // Draw nodes
         const conns = connectedSet(connections)
         for (const node of nodes) {
-          drawNode(offCtx, node, theme, conns, false, false, null, null)
+          drawNode(offCtx, node, theme, conns, false, false, null, null, pinTypesRegistry)
         }
 
         offCtx.restore()
@@ -854,10 +865,10 @@ export const FlowCanvas: React.FC<FlowCanvasProps> = ({
       drawGroups(ctx, nodes, theme, sel)
 
       // Connections (with animation + waypoints)
-      drawConnections(ctx, nodes, connections, nodeMap, theme, isAnimating ? animPhaseRef.current : null)
+      drawConnections(ctx, nodes, connections, nodeMap, theme, isAnimating ? animPhaseRef.current : null, pinTypesRegistry)
 
       // Waypoint handles
-      drawWaypointHandles(ctx, connections, nodes, theme, selectedWpId)
+      drawWaypointHandles(ctx, connections, nodes, theme, selectedWpId, pinTypesRegistry)
 
       // Nodes
       const draft = interaction.draftRef.current
@@ -865,7 +876,7 @@ export const FlowCanvas: React.FC<FlowCanvasProps> = ({
 
       for (const node of nodes) {
         const isHov = hovNodeId === node.id
-        drawNode(ctx, node, theme, conns, sel.has(node.id), isHov, isHov ? hovPin : null, draftInfo)
+        drawNode(ctx, node, theme, conns, sel.has(node.id), isHov, isHov ? hovPin : null, draftInfo, pinTypesRegistry)
       }
 
       if (draft) drawDraft(ctx, draft, theme)
@@ -906,6 +917,7 @@ export const FlowCanvas: React.FC<FlowCanvasProps> = ({
       detach()
       unsubs.forEach(u => u())
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [store, customTheme, readOnly, snapToGrid])
 
   const canvasStyle: React.CSSProperties = {

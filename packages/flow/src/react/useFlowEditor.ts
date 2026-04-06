@@ -1,4 +1,4 @@
-import { useMemo, useCallback } from 'react'
+import { useMemo, useCallback, useEffect, useRef } from 'react'
 import type { FlowNode, FlowConnection, FlowGraph, FlowNodePosition } from '../types'
 import type { Validator } from '../model/Validator'
 import type { NodeDefinitionWithFactory } from '../define/defineNode'
@@ -7,12 +7,16 @@ import { useGraphStore } from './useGraphStore'
 import { useHistory, type UseHistoryAPI } from './useHistory'
 import { useClipboard } from './useClipboard'
 import type { GraphStore } from '../model/GraphStore'
+import type { FlowPlugin } from '../plugin/types'
+import type { PinTypeRegistry } from '../plugin/PinTypeRegistry'
+import { createFlowEditor } from '../plugin/createFlowEditor'
 
 export interface UseFlowEditorOptions {
   initialGraph?: FlowGraph
   validator?: Validator
   history?: boolean | { maxSize?: number }
   registry?: NodeDefinitionWithFactory[]
+  plugins?: Array<FlowPlugin | (() => FlowPlugin)>
 }
 
 export interface FlowEditorAPI {
@@ -46,6 +50,7 @@ export interface FlowEditorAPI {
   fromJSON(graph: FlowGraph): void
 
   registry: NodeRegistry | null
+  pinTypes: PinTypeRegistry | null
 }
 
 const noopHistory: Pick<UseHistoryAPI, 'undo' | 'redo' | 'canUndo' | 'canRedo'> = {
@@ -56,32 +61,63 @@ const noopHistory: Pick<UseHistoryAPI, 'undo' | 'redo' | 'canUndo' | 'canRedo'> 
 }
 
 export function useFlowEditor(options?: UseFlowEditorOptions): FlowEditorAPI {
+  const hasPlugins = options?.plugins && options.plugins.length > 0
+
+  // Plugin path: use createFlowEditor for full plugin pipeline
+  const editorInstance = useMemo(() => {
+    if (!hasPlugins) return null
+    return createFlowEditor({
+      plugins: options!.plugins,
+      initialGraph: options?.initialGraph,
+      validator: options?.validator,
+      history: options?.history,
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // Cleanup plugin dispose on unmount
+  const disposeRef = useRef<(() => void) | null>(null)
+  if (editorInstance) {
+    disposeRef.current = editorInstance.dispose
+  }
+  useEffect(() => {
+    return () => { disposeRef.current?.() }
+  }, [])
+
+  // Non-plugin path: use the classic hooks-based approach
   const historyEnabled = options?.history !== false
 
-  // When history is disabled, pass maxSize: 1 to minimize memory overhead.
-  // useHistory is always called (Rules of Hooks), but with maxSize: 1 the
-  // HistoryManager keeps at most 1 entry in the stack instead of the default 50.
   const historyOptions = historyEnabled
     ? (typeof options?.history === 'object' ? options.history : undefined)
     : { maxSize: 1 }
 
-  const store = useGraphStore({
-    initialGraph: options?.initialGraph,
-    validator: options?.validator,
+  const classicStore = useGraphStore({
+    initialGraph: hasPlugins ? undefined : options?.initialGraph,
+    validator: hasPlugins ? undefined : options?.validator,
   })
 
+  const store = editorInstance?.store ?? classicStore
+
   // Always call useHistory to respect Rules of Hooks (no conditional hook calls).
-  // When history is disabled, we ignore its output and use noopHistory instead.
-  const historyApi = useHistory(store, historyOptions)
-  const effectiveHistory = historyEnabled ? historyApi : noopHistory
+  // When using plugins, the editorInstance already has its own HistoryManager,
+  // so we pass maxSize: 1 to minimize overhead for the unused hook instance.
+  const historyApi = useHistory(store, hasPlugins ? { maxSize: 1 } : historyOptions)
+  const effectiveHistory = hasPlugins
+    ? (editorInstance!.history
+        ? { undo: () => editorInstance!.history!.undo(), redo: () => editorInstance!.history!.redo(), canUndo: editorInstance!.history!.canUndo(), canRedo: editorInstance!.history!.canRedo() }
+        : noopHistory)
+    : (historyEnabled ? historyApi : noopHistory)
 
   const registry = useMemo(() => {
+    if (hasPlugins) return editorInstance!.registry
     if (!options?.registry || options.registry.length === 0) return null
     const reg = new NodeRegistry()
     reg.registerMany(options.registry)
     return reg
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  const pinTypes = editorInstance?.pinTypes ?? null
 
   const addNode = useCallback((node: FlowNode) => store.addNode(node), [store])
   const removeNode = useCallback((nodeId: string) => store.removeNode(nodeId), [store])
@@ -125,5 +161,6 @@ export function useFlowEditor(options?: UseFlowEditorOptions): FlowEditorAPI {
     toJSON,
     fromJSON,
     registry,
+    pinTypes,
   }
 }
