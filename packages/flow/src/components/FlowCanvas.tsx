@@ -1,22 +1,34 @@
-import React, { useRef, useEffect, useMemo } from 'react'
-import type { FlowNode, FlowPin } from '../types'
+import React, { useRef, useEffect, useMemo, useState } from 'react'
+import type { FlowNode, FlowPin, FlowConnection, FlowWaypoint } from '../types'
 import type { GraphStore } from '../model/GraphStore'
-import { useCanvasInteraction } from '../hooks/useCanvasInteraction'
-import { nodeHeight } from '../hooks/hitTest'
+import { useCanvasInteraction, type HoverPin, type ContextMenuEvent } from '../hooks/useCanvasInteraction'
+import { nodeHeight, GROUP_NODE_TYPE } from '../hooks/hitTest'
 import type { DraftConnection } from '../hooks/useConnection'
 import type { Rect } from '../hooks/useSelection'
+import type { AlignmentGuide } from '../hooks/useNodeDrag'
+import { Minimap } from './Minimap'
+import { SearchPalette, type SearchPaletteItem } from './SearchPalette'
+import {
+  NODE_W, TITLE_H, SLOT_H, PIN_Y0, CORNER, PIN_R, EXEC_R, GRID,
+  GROUP_HEADER_H, BEZIER_MIN_OFFSET,
+} from '../constants'
 
 /* ══════════════════════════════════════════════════════════════
-   FlowCanvas — Interactive Canvas 2D node editor
-   Claude Terminal WorkflowGraphEngine rendering style
+   FlowCanvas - Quantum Flow Node Editor
    ══════════════════════════════════════════════════════════════ */
 
 export interface FlowTheme {
-  canvas?: { background?: string; gridColor?: string }
-  node?: { titleBar?: string; body?: string; border?: string; text?: string; subtext?: string }
+  canvas?: { background?: string; dotColor?: string; dotMajor?: string }
+  node?: { body?: string; border?: string; text?: string }
   pin?: { exec?: string; string?: string; number?: string; boolean?: string; object?: string; array?: string; [k: string]: string | undefined }
-  connection?: { width?: number; opacity?: number }
+  connection?: { width?: number }
   selection?: { color?: string }
+}
+
+export interface ExportImageOptions {
+  padding?: number
+  scale?: number
+  background?: string
 }
 
 export interface FlowCanvasProps {
@@ -25,375 +37,654 @@ export interface FlowCanvasProps {
   readOnly?: boolean
   snapToGrid?: number
   onSelectionChange?: (ids: Set<string>) => void
+  onFitView?: (fitView: () => void) => void
+  onContextMenu?: (event: ContextMenuEvent) => void
+  showMinimap?: boolean
+  snapToAlignment?: boolean
+  alignThreshold?: number
+  onExportImage?: (exportFn: (options?: ExportImageOptions) => string) => void
+  animateConnections?: boolean
+  onGroup?: (nodeIds: string[]) => void
+  searchPalette?: {
+    items: SearchPaletteItem[]
+    onSelect: (item: SearchPaletteItem, worldPos: { x: number; y: number }) => void
+  }
   width?: number | string
   height?: number | string
 }
 
-/* ── constants (from Claude Terminal WorkflowGraphEngine) ── */
+/* -- layout -- */
 
-const FONT = '-apple-system, "Segoe UI", system-ui, sans-serif'
-const TITLE_H = 30
-const SLOT_H = 22
-const PIN_R = 4.5
-const DIAMOND_R = 5
-const GRID_SIZE = 20
-const NODE_W = 220
-const CORNER = 8
-const PIN_Y0 = TITLE_H + 10
+const FONT = '"Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif'
 
-/* ── pin colors (from Claude Terminal) ── */
+/* -- palette -- */
 
-const PIN_COLORS: Record<string, string> = {
-  exec:    '#ffffff',
-  string:  '#f472b6',
+const PIN_PALETTE: Record<string, string> = {
+  exec:    '#71717a',
+  string:  '#a78bfa',
   number:  '#34d399',
-  boolean: '#fb923c',
+  boolean: '#fbbf24',
   object:  '#60a5fa',
-  array:   '#c084fc',
+  array:   '#f472b6',
 }
 
-/* ── defaults (from Claude Terminal) ── */
-
-const DEFAULTS = {
-  bg: '#0a0a0a',
-  gridColor: 'rgba(255,255,255,0.03)',
-  titleBar: '#141416',
-  body: '#101012',
-  border: 'rgba(255,255,255,0.04)',
-  text: '#bbb',
-  subtext: '#888',
-  wireW: 2,
-  wireOpacity: 0.7,
-  selectionColor: '#60a5fa',
+const D = {
+  bg:       '#0c0c10',
+  dotColor: 'rgba(255,255,255,0.025)',
+  dotMajor: 'rgba(255,255,255,0.05)',
+  body:     '#161620',
+  border:   'rgba(255,255,255,0.05)',
+  text:     '#e0e0e8',
+  sel:      '#3b82f6',
+  wireW:    1.8,
 }
 
-/* ── helpers ── */
+/* -- helpers -- */
 
-function hexToRgba(hex: string, alpha: number): string {
+function rgba(hex: string, a: number): string {
   const r = parseInt(hex.slice(1, 3), 16)
   const g = parseInt(hex.slice(3, 5), 16)
   const b = parseInt(hex.slice(5, 7), 16)
-  return `rgba(${r},${g},${b},${alpha})`
+  return `rgba(${r},${g},${b},${a})`
 }
 
-function pinColor(type: string, theme: FlowTheme): string {
-  return theme.pin?.[type] ?? PIN_COLORS[type] ?? '#6b7280'
+function pColor(type: string, t: FlowTheme): string {
+  return t.pin?.[type] ?? PIN_PALETTE[type] ?? '#6b7280'
 }
 
-interface Vec2 { x: number; y: number }
+interface V2 { x: number; y: number }
 
-function pinPos(node: FlowNode, pinId: string, isOutput: boolean): Vec2 | null {
-  const list = isOutput ? node.outputs : node.inputs
+function pinXY(node: FlowNode, pinId: string, isOut: boolean): V2 | null {
+  const list = isOut ? node.outputs : node.inputs
   const idx = list.findIndex(p => p.id === pinId)
   if (idx < 0) return null
   return {
-    x: node.position.x + (isOutput ? (node.width ?? NODE_W) : 0),
+    x: node.position.x + (isOut ? (node.width ?? NODE_W) : 0),
     y: node.position.y + PIN_Y0 + idx * SLOT_H + SLOT_H * 0.5,
   }
 }
 
-function buildConnectedPins(nodes: FlowNode[], connections: Array<{ fromNodeId: string; fromPinId: string; toNodeId: string; toPinId: string }>): Set<string> {
-  const set = new Set<string>()
+function connectedSet(connections: Array<{ fromNodeId: string; fromPinId: string; toNodeId: string; toPinId: string }>): Set<string> {
+  const s = new Set<string>()
   for (const c of connections) {
-    set.add(`${c.fromNodeId}:${c.fromPinId}:out`)
-    set.add(`${c.toNodeId}:${c.toPinId}:in`)
+    s.add(`${c.fromNodeId}:${c.fromPinId}:o`)
+    s.add(`${c.toNodeId}:${c.toPinId}:i`)
   }
-  return set
+  return s
 }
 
-function buildTheme(custom?: FlowTheme): FlowTheme {
+function buildTheme(c?: FlowTheme): FlowTheme {
   return {
-    canvas: {
-      background: custom?.canvas?.background ?? DEFAULTS.bg,
-      gridColor: custom?.canvas?.gridColor ?? DEFAULTS.gridColor,
-    },
-    node: {
-      titleBar: custom?.node?.titleBar ?? DEFAULTS.titleBar,
-      body: custom?.node?.body ?? DEFAULTS.body,
-      border: custom?.node?.border ?? DEFAULTS.border,
-      text: custom?.node?.text ?? DEFAULTS.text,
-      subtext: custom?.node?.subtext ?? DEFAULTS.subtext,
-    },
-    pin: { ...PIN_COLORS, ...custom?.pin },
-    connection: {
-      width: custom?.connection?.width ?? DEFAULTS.wireW,
-      opacity: custom?.connection?.opacity ?? DEFAULTS.wireOpacity,
-    },
-    selection: {
-      color: custom?.selection?.color ?? DEFAULTS.selectionColor,
-    },
+    canvas: { background: c?.canvas?.background ?? D.bg, dotColor: c?.canvas?.dotColor ?? D.dotColor, dotMajor: c?.canvas?.dotMajor ?? D.dotMajor },
+    node: { body: c?.node?.body ?? D.body, border: c?.node?.border ?? D.border, text: c?.node?.text ?? D.text },
+    pin: { ...PIN_PALETTE, ...c?.pin },
+    connection: { width: c?.connection?.width ?? D.wireW },
+    selection: { color: c?.selection?.color ?? D.sel },
   }
 }
 
-/* ── grid ── */
+function badge(node: FlowNode): string {
+  const i = node.type.indexOf('/')
+  return i > 0 ? node.type.slice(0, i).toUpperCase() : ''
+}
 
-function drawGrid(ctx: CanvasRenderingContext2D, w: number, h: number, theme: FlowTheme, offsetX: number, offsetY: number, zoom: number) {
-  ctx.fillStyle = theme.canvas!.background!
-  ctx.fillRect(0, 0, w, h)
+/* -- compatible pin preview -- */
 
-  const gridSize = GRID_SIZE * zoom
-  if (gridSize < 4) return // too zoomed out to show grid
+interface DraftPinInfo {
+  sourceNodeId: string
+  sourceType: string
+  isFromOutput: boolean
+}
 
-  ctx.strokeStyle = theme.canvas!.gridColor!
-  ctx.lineWidth = 0.5
+function resolveDraftInfo(draft: DraftConnection, nodes: FlowNode[]): DraftPinInfo | null {
+  const sn = nodes.find(n => n.id === draft.fromNodeId)
+  if (!sn) return null
+  const sp = draft.isFromOutput
+    ? sn.outputs.find(p => p.id === draft.fromPinId)
+    : sn.inputs.find(p => p.id === draft.fromPinId)
+  if (!sp) return null
+  return { sourceNodeId: draft.fromNodeId, sourceType: sp.type, isFromOutput: draft.isFromOutput }
+}
+
+function isPinCompatible(candidateType: string, candidateIsOutput: boolean, info: DraftPinInfo): boolean {
+  if (candidateIsOutput === info.isFromOutput) return false
+  if (info.sourceType === 'exec') return candidateType === 'exec'
+  if (candidateType === 'exec') return false
+  return candidateType === info.sourceType
+}
+
+/* -- grid -- */
+
+function drawGrid(ctx: CanvasRenderingContext2D, cw: number, ch: number, t: FlowTheme, ox: number, oy: number, zoom: number) {
+  ctx.fillStyle = t.canvas!.background!
+  ctx.fillRect(0, 0, cw, ch)
+
+  const gs = GRID * zoom
+  if (gs < 8) return
+
+  const sx = ox % gs
+  const sy = oy % gs
+  const dr = Math.max(0.6, gs / 28)
+
+  ctx.fillStyle = t.canvas!.dotColor!
+  for (let x = sx; x < cw; x += gs) {
+    for (let y = sy; y < ch; y += gs) {
+      ctx.beginPath()
+      ctx.arc(x, y, dr, 0, Math.PI * 2)
+      ctx.fill()
+    }
+  }
+
+  if (gs >= 10) {
+    const ms = gs * 5
+    const mx = ox % ms
+    const my = oy % ms
+    ctx.fillStyle = t.canvas!.dotMajor!
+    for (let x = mx; x < cw; x += ms) {
+      for (let y = my; y < ch; y += ms) {
+        ctx.beginPath()
+        ctx.arc(x, y, dr * 2.2, 0, Math.PI * 2)
+        ctx.fill()
+      }
+    }
+  }
+}
+
+/* -- groups -- */
+
+function drawGroups(ctx: CanvasRenderingContext2D, nodes: FlowNode[], t: FlowTheme, selected: Set<string>) {
+  const sel = t.selection!.color!
+
+  for (const node of nodes) {
+    if (node.type !== GROUP_NODE_TYPE) continue
+
+    const x = node.position.x
+    const y = node.position.y
+    const gw = (node.data.groupWidth as number) ?? 300
+    const gh = (node.data.groupHeight as number) ?? 200
+    const color = (node.data.groupColor as string) ?? '#6366f1'
+    const label = node.label
+    const isSel = selected.has(node.id)
+
+    ctx.save()
+
+    // Body fill
+    ctx.beginPath()
+    ctx.roundRect(x, y, gw, gh, 12)
+    ctx.fillStyle = rgba(color, 0.05)
+    ctx.fill()
+
+    // Header band
+    ctx.beginPath()
+    ctx.roundRect(x, y, gw, GROUP_HEADER_H, [12, 12, 0, 0])
+    ctx.fillStyle = rgba(color, 0.12)
+    ctx.fill()
+
+    // Border
+    ctx.beginPath()
+    ctx.roundRect(x + 0.5, y + 0.5, gw - 1, gh - 1, 12)
+    ctx.strokeStyle = isSel ? rgba(sel, 0.35) : rgba(color, 0.2)
+    ctx.lineWidth = isSel ? 1.5 : 1
+    ctx.setLineDash(isSel ? [] : [6, 4])
+    ctx.stroke()
+    ctx.setLineDash([])
+
+    // Label
+    ctx.fillStyle = rgba(color, 0.65)
+    ctx.font = `600 11px ${FONT}`
+    ctx.textBaseline = 'middle'
+    ctx.textAlign = 'left'
+    ctx.fillText(label, x + 14, y + GROUP_HEADER_H * 0.5)
+
+    // Resize handle indicator (bottom-right)
+    ctx.beginPath()
+    ctx.moveTo(x + gw - 4, y + gh - 12)
+    ctx.lineTo(x + gw - 4, y + gh - 4)
+    ctx.lineTo(x + gw - 12, y + gh - 4)
+    ctx.strokeStyle = rgba(color, 0.2)
+    ctx.lineWidth = 1.5
+    ctx.stroke()
+
+    ctx.restore()
+  }
+}
+
+/* -- pins -- */
+
+function drawDataPin(ctx: CanvasRenderingContext2D, px: number, py: number, color: string, filled: boolean, hover: boolean) {
+  const r = hover ? PIN_R + 0.5 : PIN_R
+
+  if (hover) {
+    ctx.save()
+    ctx.shadowColor = color
+    ctx.shadowBlur = 10
+    ctx.beginPath()
+    ctx.arc(px, py, r + 4, 0, Math.PI * 2)
+    ctx.fillStyle = rgba(color, 0.05)
+    ctx.fill()
+    ctx.restore()
+  }
+
   ctx.beginPath()
+  ctx.arc(px, py, r, 0, Math.PI * 2)
 
-  const startX = offsetX % gridSize
-  const startY = offsetY % gridSize
-
-  for (let x = startX; x < w; x += gridSize) {
-    ctx.moveTo(x, 0)
-    ctx.lineTo(x, h)
+  if (filled) {
+    ctx.save()
+    ctx.shadowColor = rgba(color, 0.35)
+    ctx.shadowBlur = 5
+    ctx.fillStyle = color
+    ctx.fill()
+    ctx.restore()
+  } else {
+    ctx.strokeStyle = rgba(color, hover ? 0.55 : 0.28)
+    ctx.lineWidth = 1.5
+    ctx.stroke()
   }
-  for (let y = startY; y < h; y += gridSize) {
-    ctx.moveTo(0, y)
-    ctx.lineTo(w, y)
-  }
-  ctx.stroke()
 }
 
-/* ── pins ── */
+function drawExecPin(ctx: CanvasRenderingContext2D, px: number, py: number, filled: boolean, hover: boolean) {
+  const r = hover ? EXEC_R + 0.5 : EXEC_R
+
+  if (hover) {
+    ctx.save()
+    ctx.shadowColor = 'rgba(200,200,220,0.25)'
+    ctx.shadowBlur = 10
+    ctx.beginPath()
+    ctx.arc(px, py, r + 4, 0, Math.PI * 2)
+    ctx.fillStyle = 'rgba(200,200,220,0.04)'
+    ctx.fill()
+    ctx.restore()
+  }
+
+  ctx.beginPath()
+  ctx.moveTo(px, py - r)
+  ctx.lineTo(px + r, py)
+  ctx.lineTo(px, py + r)
+  ctx.lineTo(px - r, py)
+  ctx.closePath()
+
+  if (filled) {
+    ctx.save()
+    ctx.shadowColor = 'rgba(200,200,220,0.25)'
+    ctx.shadowBlur = 4
+    ctx.fillStyle = '#c4c4d0'
+    ctx.fill()
+    ctx.restore()
+  } else {
+    ctx.strokeStyle = hover ? 'rgba(200,200,220,0.45)' : 'rgba(200,200,220,0.18)'
+    ctx.lineWidth = 1.2
+    ctx.stroke()
+  }
+}
 
 function drawPins(
   ctx: CanvasRenderingContext2D,
   node: FlowNode,
-  theme: FlowTheme,
-  connectedPins: Set<string>,
+  t: FlowTheme,
+  conns: Set<string>,
+  hPin: HoverPin | null,
+  draftInfo: DraftPinInfo | null,
 ) {
   const x = node.position.x
   const y = node.position.y
   const w = node.width ?? NODE_W
 
-  const drawPinList = (pins: FlowPin[], isOutput: boolean) => {
-    pins.forEach((pin, i) => {
-      const py = y + PIN_Y0 + i * SLOT_H + SLOT_H * 0.5
-      const px = isOutput ? x + w : x
-      const color = pinColor(pin.type, theme)
-      const connected = connectedPins.has(`${node.id}:${pin.id}:${isOutput ? 'out' : 'in'}`)
+  const draw = (pin: FlowPin, idx: number, isOut: boolean) => {
+    const py = y + PIN_Y0 + idx * SLOT_H + SLOT_H * 0.5
+    const px = isOut ? x + w : x
+    const color = pColor(pin.type, t)
+    const filled = conns.has(`${node.id}:${pin.id}:${isOut ? 'o' : 'i'}`)
+    const hover = hPin != null && hPin.pinId === pin.id && hPin.isOutput === isOut
 
-      if (pin.type === 'exec') {
-        const r = DIAMOND_R
-        ctx.beginPath()
-        ctx.moveTo(px, py - r)
-        ctx.lineTo(px + r, py)
-        ctx.lineTo(px, py + r)
-        ctx.lineTo(px - r, py)
-        ctx.closePath()
-        if (connected) {
-          ctx.fillStyle = '#ccc'
-          ctx.fill()
-        } else {
-          ctx.strokeStyle = '#888'
-          ctx.lineWidth = 1.5
-          ctx.stroke()
-        }
+    let alpha = 1.0
+    let compatible = false
+    if (draftInfo) {
+      if (node.id === draftInfo.sourceNodeId) {
+        alpha = 0.15
+      } else if (isPinCompatible(pin.type, isOut, draftInfo)) {
+        alpha = 1.0
+        compatible = true
       } else {
-        ctx.beginPath()
-        ctx.arc(px, py, PIN_R, 0, Math.PI * 2)
-        if (connected) {
-          ctx.save()
-          ctx.shadowColor = color
-          ctx.shadowBlur = 6
-          ctx.fillStyle = color
-          ctx.fill()
-          ctx.restore()
-        } else {
-          ctx.strokeStyle = hexToRgba(color, 0.6)
-          ctx.lineWidth = 1.5
-          ctx.stroke()
-        }
+        alpha = 0.15
       }
+    }
 
-      if (pin.label) {
-        ctx.fillStyle = hexToRgba(color, 0.7)
-        ctx.font = `500 11px ${FONT}`
-        ctx.textAlign = isOutput ? 'right' : 'left'
-        ctx.textBaseline = 'middle'
-        const labelX = isOutput ? px - 12 : px + 12
-        ctx.fillText(pin.label, labelX, py)
+    ctx.save()
+    ctx.globalAlpha = alpha
 
-        if (pin.type !== 'exec') {
-          ctx.fillStyle = hexToRgba(color, 0.3)
-          ctx.font = `400 9px ${FONT}`
-          ctx.fillText(pin.type, labelX, py + 12)
-        }
-      }
-    })
+    if (compatible && !hover) {
+      ctx.save()
+      ctx.shadowColor = pin.type === 'exec' ? 'rgba(200,200,220,0.4)' : color
+      ctx.shadowBlur = 8
+      ctx.beginPath()
+      ctx.arc(px, py, PIN_R + 2, 0, Math.PI * 2)
+      ctx.fillStyle = pin.type === 'exec' ? 'rgba(200,200,220,0.06)' : rgba(color, 0.06)
+      ctx.fill()
+      ctx.restore()
+    }
+
+    if (pin.type === 'exec') {
+      drawExecPin(ctx, px, py, filled, hover)
+    } else {
+      drawDataPin(ctx, px, py, color, filled, hover)
+    }
+
+    if (pin.label) {
+      ctx.fillStyle = rgba(color, hover ? 0.75 : filled ? 0.58 : 0.42)
+      ctx.font = `400 11px ${FONT}`
+      ctx.textAlign = isOut ? 'right' : 'left'
+      ctx.textBaseline = 'middle'
+      ctx.fillText(pin.label, isOut ? px - 15 : px + 15, py)
+    }
+
+    ctx.restore()
   }
 
-  drawPinList(node.inputs, false)
-  drawPinList(node.outputs, true)
+  node.inputs.forEach((p, i) => draw(p, i, false))
+  node.outputs.forEach((p, i) => draw(p, i, true))
 }
 
-/* ── node ── */
+/* -- node -- */
 
 function drawNode(
   ctx: CanvasRenderingContext2D,
   node: FlowNode,
-  theme: FlowTheme,
-  connectedPins: Set<string>,
-  isSelected: boolean,
+  t: FlowTheme,
+  conns: Set<string>,
+  selected: boolean,
+  hovered: boolean,
+  hPin: HoverPin | null,
+  draftInfo: DraftPinInfo | null,
 ) {
+  if (node.type === GROUP_NODE_TYPE) return
+
   const x = node.position.x
   const y = node.position.y
   const w = node.width ?? NODE_W
   const h = nodeHeight(node)
-  const accent = node.color ?? '#6c63ff'
+  const accent = node.color ?? '#6366f1'
+  const sel = t.selection!.color!
 
   // Shadow
   ctx.save()
-  ctx.shadowColor = 'rgba(0,0,0,0.6)'
-  ctx.shadowBlur = 18
-  ctx.shadowOffsetY = 4
+  ctx.shadowColor = 'rgba(0,0,0,0.4)'
+  ctx.shadowBlur = 22
+  ctx.shadowOffsetX = 0
+  ctx.shadowOffsetY = 5
   ctx.beginPath()
   ctx.roundRect(x, y, w, h, CORNER)
-  ctx.fillStyle = theme.node!.body!
+  ctx.fillStyle = t.node!.body!
   ctx.fill()
   ctx.restore()
 
-  // Title bar
+  // Body (clipped)
   ctx.save()
   ctx.beginPath()
   ctx.roundRect(x, y, w, h, CORNER)
   ctx.clip()
-  ctx.fillStyle = theme.node!.titleBar!
-  ctx.fillRect(x, y, w, TITLE_H)
-  ctx.fillStyle = hexToRgba(accent, 0.18)
-  ctx.fillRect(x, y, w, TITLE_H)
+
+  ctx.fillStyle = t.node!.body!
+  ctx.fillRect(x, y, w, h)
+
   ctx.fillStyle = accent
   ctx.fillRect(x, y, w, 2)
+
+  ctx.fillStyle = rgba(accent, 0.03)
+  ctx.fillRect(x, y, w, TITLE_H)
+
+  if (hovered && !selected) {
+    const grad = ctx.createLinearGradient(x, y, x, y + h * 0.3)
+    grad.addColorStop(0, 'rgba(255,255,255,0.012)')
+    grad.addColorStop(1, 'rgba(255,255,255,0)')
+    ctx.fillStyle = grad
+    ctx.fillRect(x, y, w, h * 0.3)
+  }
+
   ctx.restore()
 
-  // Body
-  ctx.save()
+  // Inset separator
   ctx.beginPath()
-  ctx.roundRect(x, y, w, h, CORNER)
-  ctx.clip()
-  ctx.fillStyle = theme.node!.body!
-  ctx.fillRect(x, y + TITLE_H, w, h - TITLE_H)
-  const gradient = ctx.createLinearGradient(x, y + TITLE_H, x, y + TITLE_H + 18)
-  gradient.addColorStop(0, hexToRgba(accent, 0.06))
-  gradient.addColorStop(1, 'transparent')
-  ctx.fillStyle = gradient
-  ctx.fillRect(x, y + TITLE_H, w, 18)
-  ctx.restore()
+  ctx.moveTo(x + 14, y + TITLE_H)
+  ctx.lineTo(x + w - 14, y + TITLE_H)
+  ctx.strokeStyle = 'rgba(255,255,255,0.04)'
+  ctx.lineWidth = 0.5
+  ctx.stroke()
 
   // Border
   ctx.beginPath()
-  ctx.roundRect(x, y, w, h, CORNER)
-  ctx.strokeStyle = isSelected ? theme.selection!.color! : theme.node!.border!
-  ctx.lineWidth = isSelected ? 2 : 0.5
+  ctx.roundRect(x + 0.5, y + 0.5, w - 1, h - 1, CORNER)
+  if (selected) {
+    ctx.strokeStyle = rgba(sel, 0.4)
+    ctx.lineWidth = 1.5
+  } else if (hovered) {
+    ctx.strokeStyle = 'rgba(255,255,255,0.08)'
+    ctx.lineWidth = 0.75
+  } else {
+    ctx.strokeStyle = t.node!.border!
+    ctx.lineWidth = 0.5
+  }
   ctx.stroke()
 
-  // Selection glow
-  if (isSelected) {
+  if (selected) {
     ctx.save()
-    ctx.shadowColor = theme.selection!.color!
-    ctx.shadowBlur = 8
+    ctx.shadowColor = rgba(sel, 0.08)
+    ctx.shadowBlur = 16
     ctx.beginPath()
-    ctx.roundRect(x, y, w, h, CORNER)
-    ctx.strokeStyle = theme.selection!.color!
-    ctx.lineWidth = 1.5
+    ctx.roundRect(x - 1, y - 1, w + 2, h + 2, CORNER + 1)
+    ctx.strokeStyle = rgba(sel, 0.12)
+    ctx.lineWidth = 2
     ctx.stroke()
     ctx.restore()
   }
 
-  // Title dot
-  ctx.save()
-  ctx.shadowColor = accent
-  ctx.shadowBlur = 4
+  // Title accent dot
   ctx.beginPath()
-  ctx.arc(x + 12, y + TITLE_H * 0.5, 4, 0, Math.PI * 2)
+  ctx.arc(x + 16, y + TITLE_H * 0.5, 3.5, 0, Math.PI * 2)
   ctx.fillStyle = accent
   ctx.fill()
-  ctx.restore()
 
   // Title text
-  ctx.fillStyle = theme.node!.text!
+  ctx.fillStyle = t.node!.text!
   ctx.font = `600 12px ${FONT}`
   ctx.textBaseline = 'middle'
   ctx.textAlign = 'left'
-  ctx.fillText(node.label, x + 22, y + TITLE_H * 0.5)
+  ctx.fillText(node.label, x + 28, y + TITLE_H * 0.5)
 
-  drawPins(ctx, node, theme, connectedPins)
-}
-
-/* ── connections ── */
-
-function drawConnections(ctx: CanvasRenderingContext2D, store: GraphStore, theme: FlowTheme) {
-  const nodes = store.getNodes()
-
-  ctx.save()
-  ctx.globalAlpha = theme.connection!.opacity as number
-  ctx.lineWidth = theme.connection!.width as number
-  ctx.lineCap = 'round'
-
-  for (const conn of store.getConnections()) {
-    const fromNode = nodes.find(n => n.id === conn.fromNodeId)
-    const toNode = nodes.find(n => n.id === conn.toNodeId)
-    if (!fromNode || !toNode) continue
-
-    const fromP = pinPos(fromNode, conn.fromPinId, true)
-    const toP = pinPos(toNode, conn.toPinId, false)
-    if (!fromP || !toP) continue
-
-    const fromPin = fromNode.outputs.find(p => p.id === conn.fromPinId)
-    const color = pinColor(fromPin?.type ?? 'exec', theme)
-    const dx = Math.abs(toP.x - fromP.x)
-    const offset = Math.max(dx * 0.5, 60)
+  // Category badge
+  const badgeText = badge(node)
+  if (badgeText) {
+    ctx.font = `600 8px ${FONT}`
+    const tw = ctx.measureText(badgeText).width
+    const bw = tw + 10
+    const bh = 16
+    const bx = x + w - bw - 10
+    const by = y + (TITLE_H - bh) * 0.5
 
     ctx.beginPath()
-    ctx.moveTo(fromP.x, fromP.y)
-    ctx.bezierCurveTo(fromP.x + offset, fromP.y, toP.x - offset, toP.y, toP.x, toP.y)
-    ctx.strokeStyle = color
+    ctx.roundRect(bx, by, bw, bh, 4)
+    ctx.fillStyle = rgba(accent, 0.1)
+    ctx.fill()
+
+    ctx.fillStyle = rgba(accent, 0.65)
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'middle'
+    ctx.fillText(badgeText, bx + bw * 0.5, by + bh * 0.5)
+  }
+
+  drawPins(ctx, node, t, conns, hPin, draftInfo)
+}
+
+/* -- connections (with waypoints + animation) -- */
+
+function drawBezierChain(ctx: CanvasRenderingContext2D, fp: V2, tp: V2, waypoints?: FlowWaypoint[]) {
+  const pts: V2[] = [fp, ...(waypoints ?? []), tp]
+  ctx.beginPath()
+  ctx.moveTo(fp.x, fp.y)
+  for (let i = 0; i < pts.length - 1; i++) {
+    const a = pts[i]
+    const b = pts[i + 1]
+    const dx = Math.abs(b.x - a.x)
+    const off = Math.max(dx * 0.5, BEZIER_MIN_OFFSET)
+    ctx.bezierCurveTo(a.x + off, a.y, b.x - off, b.y, b.x, b.y)
+  }
+}
+
+function drawConnections(
+  ctx: CanvasRenderingContext2D,
+  nodes: FlowNode[],
+  connections: FlowConnection[],
+  nodeMap: Map<string, FlowNode>,
+  t: FlowTheme,
+  execDashOffset: number | null,
+) {
+  const lw = t.connection!.width as number
+
+  ctx.save()
+  ctx.lineCap = 'round'
+  ctx.lineWidth = lw
+
+  for (const conn of connections) {
+    const fn = nodeMap.get(conn.fromNodeId)
+    const tn = nodeMap.get(conn.toNodeId)
+    if (!fn || !tn) continue
+
+    const fp = pinXY(fn, conn.fromPinId, true)
+    const tp = pinXY(tn, conn.toPinId, false)
+    if (!fp || !tp) continue
+
+    const fromPin = fn.outputs.find(p => p.id === conn.fromPinId)
+    const toPin = tn.inputs.find(p => p.id === conn.toPinId)
+    const fc = pColor(fromPin?.type ?? 'exec', t)
+    const tc = pColor(toPin?.type ?? 'exec', t)
+    const isExec = fromPin?.type === 'exec'
+
+    // Animated dashes for exec connections
+    if (isExec && execDashOffset != null) {
+      ctx.setLineDash([8, 6])
+      ctx.lineDashOffset = -execDashOffset
+    } else {
+      ctx.setLineDash([])
+      ctx.lineDashOffset = 0
+    }
+
+    const grad = ctx.createLinearGradient(fp.x, 0, tp.x, 0)
+    grad.addColorStop(0, rgba(fc, 0.5))
+    grad.addColorStop(1, rgba(tc, 0.38))
+
+    drawBezierChain(ctx, fp, tp, conn.waypoints)
+    ctx.strokeStyle = grad
+    ctx.stroke()
+  }
+
+  ctx.setLineDash([])
+  ctx.restore()
+}
+
+/* -- waypoint handles -- */
+
+function drawWaypointHandles(
+  ctx: CanvasRenderingContext2D,
+  connections: FlowConnection[],
+  nodes: FlowNode[],
+  t: FlowTheme,
+  selectedWpId: string | null,
+) {
+  for (const conn of connections) {
+    if (!conn.waypoints || conn.waypoints.length === 0) continue
+    const fn = nodes.find(n => n.id === conn.fromNodeId)
+    if (!fn) continue
+    const fromPin = fn.outputs.find(p => p.id === conn.fromPinId)
+    const color = pColor(fromPin?.type ?? 'exec', t)
+
+    for (const wp of conn.waypoints) {
+      const isSel = wp.id === selectedWpId
+
+      ctx.beginPath()
+      ctx.arc(wp.x, wp.y, isSel ? 6 : 4.5, 0, Math.PI * 2)
+      ctx.fillStyle = isSel ? color : t.node!.body!
+      ctx.fill()
+      ctx.strokeStyle = rgba(color, isSel ? 0.8 : 0.5)
+      ctx.lineWidth = 1.5
+      ctx.stroke()
+    }
+  }
+}
+
+/* -- draft connection -- */
+
+function drawDraft(ctx: CanvasRenderingContext2D, draft: DraftConnection, t: FlowTheme) {
+  ctx.save()
+  ctx.lineWidth = 1.5
+  ctx.lineCap = 'round'
+  ctx.setLineDash([6, 5])
+  ctx.globalAlpha = 0.3
+
+  const f = draft.fromPos
+  const to = draft.toPos
+  const dx = Math.abs(to.x - f.x)
+  const off = Math.max(dx * 0.5, 60)
+
+  ctx.beginPath()
+  if (draft.isFromOutput) {
+    ctx.moveTo(f.x, f.y)
+    ctx.bezierCurveTo(f.x + off, f.y, to.x - off, to.y, to.x, to.y)
+  } else {
+    ctx.moveTo(f.x, f.y)
+    ctx.bezierCurveTo(f.x - off, f.y, to.x + off, to.y, to.x, to.y)
+  }
+  ctx.strokeStyle = '#ffffff'
+  ctx.stroke()
+
+  ctx.setLineDash([])
+  ctx.globalAlpha = 0.25
+  ctx.beginPath()
+  ctx.arc(to.x, to.y, 3, 0, Math.PI * 2)
+  ctx.fillStyle = '#ffffff'
+  ctx.fill()
+
+  ctx.restore()
+}
+
+/* -- rubber band -- */
+
+function drawRubberBand(ctx: CanvasRenderingContext2D, rect: Rect, t: FlowTheme) {
+  const c = t.selection!.color!.startsWith('#') ? t.selection!.color! : '#3b82f6'
+  ctx.save()
+  ctx.fillStyle = rgba(c, 0.04)
+  ctx.fillRect(rect.x, rect.y, rect.w, rect.h)
+  ctx.strokeStyle = rgba(c, 0.18)
+  ctx.lineWidth = 1
+  ctx.setLineDash([5, 4])
+  ctx.strokeRect(rect.x, rect.y, rect.w, rect.h)
+  ctx.restore()
+}
+
+/* -- alignment guides -- */
+
+function drawAlignmentGuides(ctx: CanvasRenderingContext2D, guides: AlignmentGuide[], zoom: number) {
+  if (guides.length === 0) return
+  ctx.save()
+  ctx.strokeStyle = '#a78bfa'
+  ctx.lineWidth = 1 / zoom
+  ctx.setLineDash([4 / zoom, 3 / zoom])
+  ctx.globalAlpha = 0.6
+
+  for (const g of guides) {
+    ctx.beginPath()
+    if (g.orientation === 'vertical') {
+      ctx.moveTo(g.worldCoord, g.start)
+      ctx.lineTo(g.worldCoord, g.end)
+    } else {
+      ctx.moveTo(g.start, g.worldCoord)
+      ctx.lineTo(g.end, g.worldCoord)
+    }
     ctx.stroke()
   }
 
   ctx.restore()
 }
 
-/* ── draft connection ── */
-
-function drawDraftConnection(ctx: CanvasRenderingContext2D, draft: DraftConnection, theme: FlowTheme) {
-  ctx.save()
-  ctx.globalAlpha = 0.5
-  ctx.lineWidth = (theme.connection!.width as number) ?? 2
-  ctx.lineCap = 'round'
-  ctx.setLineDash([6, 4])
-
-  const from = draft.fromPos
-  const to = draft.toPos
-  const dx = Math.abs(to.x - from.x)
-  const offset = Math.max(dx * 0.5, 60)
-
-  ctx.beginPath()
-  if (draft.isFromOutput) {
-    ctx.moveTo(from.x, from.y)
-    ctx.bezierCurveTo(from.x + offset, from.y, to.x - offset, to.y, to.x, to.y)
-  } else {
-    ctx.moveTo(from.x, from.y)
-    ctx.bezierCurveTo(from.x - offset, from.y, to.x + offset, to.y, to.x, to.y)
-  }
-  ctx.strokeStyle = '#ffffff'
-  ctx.stroke()
-  ctx.restore()
-}
-
-/* ── rubber-band ── */
-
-function drawRubberBand(ctx: CanvasRenderingContext2D, rect: Rect, theme: FlowTheme) {
-  const color = theme.selection!.color!
-  ctx.save()
-  ctx.fillStyle = hexToRgba(color.startsWith('#') ? color : '#60a5fa', 0.08)
-  ctx.fillRect(rect.x, rect.y, rect.w, rect.h)
-  ctx.strokeStyle = hexToRgba(color.startsWith('#') ? color : '#60a5fa', 0.4)
-  ctx.lineWidth = 1
-  ctx.setLineDash([4, 4])
-  ctx.strokeRect(rect.x, rect.y, rect.w, rect.h)
-  ctx.restore()
-}
-
-/* ── component ── */
+/* -- component -- */
 
 export const FlowCanvas: React.FC<FlowCanvasProps> = ({
   store,
@@ -401,16 +692,35 @@ export const FlowCanvas: React.FC<FlowCanvasProps> = ({
   readOnly,
   snapToGrid,
   onSelectionChange,
+  onFitView,
+  onContextMenu,
+  showMinimap,
+  snapToAlignment,
+  alignThreshold,
+  onExportImage,
+  animateConnections,
+  onGroup,
+  searchPalette,
   width = '100%',
   height = '600px',
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const theme = useMemo(() => buildTheme(customTheme), [customTheme])
+  const [canvasSize, setCanvasSize] = useState({ width: 0, height: 0 })
+  const [paletteOpen, setPaletteOpen] = useState(false)
+  const animPhaseRef = useRef(0)
+  const animateRef = useRef(animateConnections ?? false)
+  animateRef.current = animateConnections ?? false
 
   const interaction = useCanvasInteraction(store, {
     readOnly,
     snapToGrid,
     onSelectionChange,
+    onContextMenu,
+    snapToAlignment,
+    alignThreshold,
+    onGroup,
+    onSearchPalette: searchPalette ? () => setPaletteOpen(true) : undefined,
   })
 
   useEffect(() => {
@@ -420,97 +730,225 @@ export const FlowCanvas: React.FC<FlowCanvasProps> = ({
     const detach = interaction.attach(canvas)
     const dpr = window.devicePixelRatio || 1
 
+    // Expose fitView
+    if (onFitView) {
+      onFitView(() => {
+        const rect = canvas.getBoundingClientRect()
+        interaction.viewport.fitView(store.getNodes(), rect.width, rect.height)
+        interaction.needsRedraw.current = true
+      })
+    }
+
+    // Expose export image
+    if (onExportImage) {
+      onExportImage((options = {}) => {
+        const { padding = 40, scale = 2, background } = options
+        const nodes = store.getNodes()
+        if (nodes.length === 0) return ''
+
+        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
+        for (const n of nodes) {
+          if (n.type === GROUP_NODE_TYPE) {
+            const gw = (n.data.groupWidth as number) ?? 300
+            const gh = (n.data.groupHeight as number) ?? 200
+            if (n.position.x < minX) minX = n.position.x
+            if (n.position.y < minY) minY = n.position.y
+            if (n.position.x + gw > maxX) maxX = n.position.x + gw
+            if (n.position.y + gh > maxY) maxY = n.position.y + gh
+          } else {
+            const w = n.width ?? NODE_W
+            const h = nodeHeight(n)
+            if (n.position.x < minX) minX = n.position.x
+            if (n.position.y < minY) minY = n.position.y
+            if (n.position.x + w > maxX) maxX = n.position.x + w
+            if (n.position.y + h > maxY) maxY = n.position.y + h
+          }
+        }
+
+        const worldW = maxX - minX + padding * 2
+        const worldH = maxY - minY + padding * 2
+        const offCanvas = document.createElement('canvas')
+        offCanvas.width = worldW * scale
+        offCanvas.height = worldH * scale
+        const offCtx = offCanvas.getContext('2d')!
+        offCtx.setTransform(scale, 0, 0, scale, 0, 0)
+
+        // Background
+        offCtx.fillStyle = background ?? theme.canvas!.background!
+        offCtx.fillRect(0, 0, worldW, worldH)
+
+        // Offset to center content
+        offCtx.save()
+        offCtx.translate(-(minX - padding), -(minY - padding))
+
+        // Draw groups
+        drawGroups(offCtx, nodes, theme, new Set())
+        // Draw connections
+        const connections = store.getConnections()
+        const nodeMap = new Map(nodes.map(n => [n.id, n]))
+        drawConnections(offCtx, nodes, connections, nodeMap, theme, null)
+        // Draw waypoint handles
+        drawWaypointHandles(offCtx, connections, nodes, theme, null)
+        // Draw nodes
+        const conns = connectedSet(connections)
+        for (const node of nodes) {
+          drawNode(offCtx, node, theme, conns, false, false, null, null)
+        }
+
+        offCtx.restore()
+        return offCanvas.toDataURL('image/png')
+      })
+    }
+
     let rafId: number
 
     const paint = () => {
-      if (!interaction.needsRedraw.current) {
+      // Animation: always repaint when active
+      const isAnimating = animateRef.current
+      if (!interaction.needsRedraw.current && !isAnimating) {
         rafId = requestAnimationFrame(paint)
         return
       }
       interaction.needsRedraw.current = false
 
+      // Advance animation phase
+      if (isAnimating) {
+        animPhaseRef.current = (animPhaseRef.current + 0.8) % 28
+      }
+
       const rect = canvas.getBoundingClientRect()
       const cw = rect.width
       const ch = rect.height
-      canvas.width = cw * dpr
-      canvas.height = ch * dpr
+      const targetW = cw * dpr
+      const targetH = ch * dpr
+
+      if (canvas.width !== targetW || canvas.height !== targetH) {
+        canvas.width = targetW
+        canvas.height = targetH
+      }
+
+      if (cw !== canvasSize.width || ch !== canvasSize.height) {
+        setCanvasSize({ width: cw, height: ch })
+      }
 
       const ctx = canvas.getContext('2d')!
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
 
-      // Draw grid in screen-space (before viewport transform)
       const { offset, zoom } = interaction.viewport.ref.current
       drawGrid(ctx, cw, ch, theme, offset.x, offset.y, zoom)
 
-      // Apply viewport transform for everything else
       ctx.save()
       ctx.translate(offset.x, offset.y)
       ctx.scale(zoom, zoom)
 
-      // Draw connections
-      drawConnections(ctx, store, theme)
-
-      // Draw nodes
       const nodes = store.getNodes()
       const connections = store.getConnections()
-      const connectedPins = buildConnectedPins(nodes, connections)
+      const nodeMap = new Map(nodes.map(n => [n.id, n]))
+      const conns = connectedSet(connections)
+      const sel = interaction.selectedRef.current
+      const hovNodeId = interaction.hoveredNodeRef.current
+      const hovPin = interaction.hoveredPinRef.current
+      const selectedWpId = interaction.selectedWaypointRef.current
+
+      // Groups (behind everything)
+      drawGroups(ctx, nodes, theme, sel)
+
+      // Connections (with animation + waypoints)
+      drawConnections(ctx, nodes, connections, nodeMap, theme, isAnimating ? animPhaseRef.current : null)
+
+      // Waypoint handles
+      drawWaypointHandles(ctx, connections, nodes, theme, selectedWpId)
+
+      // Nodes
+      const draft = interaction.draftRef.current
+      const draftInfo = draft ? resolveDraftInfo(draft, nodes) : null
+
       for (const node of nodes) {
-        drawNode(ctx, node, theme, connectedPins, interaction.selection.selected.has(node.id))
+        const isHov = hovNodeId === node.id
+        drawNode(ctx, node, theme, conns, sel.has(node.id), isHov, isHov ? hovPin : null, draftInfo)
       }
 
-      // Draw draft connection
-      if (interaction.connection.draft) {
-        drawDraftConnection(ctx, interaction.connection.draft, theme)
-      }
+      if (draft) drawDraft(ctx, draft, theme)
 
-      // Draw rubber-band
-      if (interaction.selection.rubberBand) {
-        drawRubberBand(ctx, interaction.selection.rubberBand, theme)
-      }
+      const guides = interaction.alignmentGuidesRef.current
+      if (guides.length > 0) drawAlignmentGuides(ctx, guides, zoom)
+
+      const rb = interaction.rubberBandRef.current
+      if (rb) drawRubberBand(ctx, rb, theme)
 
       ctx.restore()
 
       rafId = requestAnimationFrame(paint)
     }
 
-    // Initial draw
     interaction.needsRedraw.current = true
     rafId = requestAnimationFrame(paint)
 
-    // Also redraw on resize
-    const observer = new ResizeObserver(() => {
-      interaction.needsRedraw.current = true
-    })
-    observer.observe(canvas)
+    const obs = new ResizeObserver(() => { interaction.needsRedraw.current = true })
+    obs.observe(canvas)
 
-    // Redraw when store changes
-    const unsubImported = store.events.on('graph:imported', () => { interaction.needsRedraw.current = true })
-    const unsubNodeAdded = store.events.on('node:added', () => { interaction.needsRedraw.current = true })
-    const unsubNodeRemoved = store.events.on('node:removed', () => { interaction.needsRedraw.current = true })
-    const unsubNodeMoved = store.events.on('node:moved', () => { interaction.needsRedraw.current = true })
-    const unsubConnAdded = store.events.on('connection:added', () => { interaction.needsRedraw.current = true })
-    const unsubConnRemoved = store.events.on('connection:removed', () => { interaction.needsRedraw.current = true })
-    const unsubBatchEnd = store.events.on('batch:end', () => { interaction.needsRedraw.current = true })
+    const dirty = () => { interaction.needsRedraw.current = true }
+    const unsubs = [
+      store.events.on('graph:imported', dirty),
+      store.events.on('node:added', dirty),
+      store.events.on('node:removed', dirty),
+      store.events.on('node:moved', dirty),
+      store.events.on('node:dataChanged', dirty),
+      store.events.on('connection:added', dirty),
+      store.events.on('connection:removed', dirty),
+      store.events.on('connection:updated', dirty),
+      store.events.on('batch:end', dirty),
+    ]
 
     return () => {
       cancelAnimationFrame(rafId)
-      observer.disconnect()
+      obs.disconnect()
       detach()
-      unsubImported()
-      unsubNodeAdded()
-      unsubNodeRemoved()
-      unsubNodeMoved()
-      unsubConnAdded()
-      unsubConnRemoved()
-      unsubBatchEnd()
+      unsubs.forEach(u => u())
     }
   }, [store, customTheme, readOnly, snapToGrid])
 
-  return <canvas ref={canvasRef} style={{
+  const canvasStyle: React.CSSProperties = {
     width: typeof width === 'number' ? `${width}px` : width,
     height: typeof height === 'number' ? `${height}px` : height,
     display: 'block',
     outline: 'none',
     touchAction: 'none',
-  }} />
+  }
+
+  const getViewportCenter = () => {
+    const canvas = canvasRef.current
+    if (!canvas) return { x: 0, y: 0 }
+    const rect = canvas.getBoundingClientRect()
+    return interaction.viewport.screenToWorld(rect.width / 2, rect.height / 2)
+  }
+
+  // Always use wrapper div now (search palette / minimap need it)
+  return (
+    <div style={{ position: 'relative', width: canvasStyle.width, height: canvasStyle.height }}>
+      <canvas ref={canvasRef} style={{ ...canvasStyle, width: '100%', height: '100%' }} />
+      {showMinimap && (
+        <Minimap
+          store={store}
+          viewport={interaction.viewport}
+          needsRedraw={interaction.needsRedraw}
+          canvasSize={canvasSize}
+          theme={theme}
+          style={{ position: 'absolute', bottom: 12, right: 12 }}
+        />
+      )}
+      {searchPalette && (
+        <SearchPalette
+          open={paletteOpen}
+          onClose={() => setPaletteOpen(false)}
+          items={searchPalette.items}
+          onSelect={(item, worldPos) => {
+            searchPalette.onSelect(item, worldPos)
+            setPaletteOpen(false)
+          }}
+          viewportCenter={getViewportCenter()}
+        />
+      )}
+    </div>
+  )
 }
