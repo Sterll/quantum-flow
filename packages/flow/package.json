@@ -1,7 +1,37 @@
 {
   "name": "@quantum-studios/flow",
   "version": "0.1.0",
-  "description": "Headless node editor for React — Canvas-based, TypeScript-first",
+  "description": "Headless node editor for React — Canvas 2D, TypeScript-first, blueprint-style visual scripting",
+  "license": "MIT",
+  "author": "Quantum Studios",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Sterll/quantum-flow-lib.git",
+    "directory": "packages/flow"
+  },
+  "bugs": {
+    "url": "https://github.com/Sterll/quantum-flow-lib/issues"
+  },
+  "homepage": "https://github.com/Sterll/quantum-flow-lib#readme",
+  "keywords": [
+    "flow",
+    "node-editor",
+    "canvas",
+    "react",
+    "visual-scripting",
+    "graph",
+    "blueprint",
+    "typescript",
+    "headless",
+    "node-graph"
+  ],
+  "sideEffects": false,
+  "files": [
+    "dist",
+    "LICENSE",
+    "README.md",
+    "CHANGELOG.md"
+  ],
   "main": "./dist/index.js",
   "module": "./dist/index.mjs",
   "types": "./dist/index.d.ts",
@@ -15,27 +45,38 @@
   "scripts": {
     "build": "tsup",
     "dev": "tsup --watch",
+    "lint": "eslint src",
+    "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "prepublishOnly": "npm run build && npm run test",
     "storybook": "storybook dev -p 6006",
     "build-storybook": "storybook build"
   },
   "peerDependencies": {
-    "react": ">=18"
+    "react": ">=18",
+    "react-dom": ">=18"
   },
   "devDependencies": {
+    "@eslint/js": "^9.0.0",
     "@storybook/addon-essentials": "^8.6.14",
     "@storybook/blocks": "^8.6.14",
     "@storybook/react": "^8.6.17",
     "@storybook/react-vite": "^8.6.17",
     "@testing-library/react": "^16.3.2",
     "@types/react": "^18",
+    "@vitest/coverage-v8": "^1.6.0",
+    "eslint": "^9.0.0",
+    "eslint-plugin-react-hooks": "^5.0.0",
     "jsdom": "^28.1.0",
+    "prettier": "^3.2.0",
     "react": "^18",
     "react-dom": "^18.3.1",
     "storybook": "^8.6.17",
     "tsup": "^8.0.0",
     "typescript": "^5.4.0",
+    "typescript-eslint": "^8.0.0",
     "vitest": "^1.6.0"
   }
 }
