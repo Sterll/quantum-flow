@@ -1,5 +1,7 @@
+import React, { useMemo } from 'react'
 import type { Meta, StoryObj } from '@storybook/react'
 import { FlowCanvas } from '../src/components/FlowCanvas'
+import { GraphStore } from '../src/model/GraphStore'
 import type { FlowGraph } from '../src/types'
 
 /* ────────────────────────────────────────────────
@@ -351,14 +353,23 @@ const cronGraph: FlowGraph = {
   ],
 }
 
-const meta: Meta<typeof FlowCanvas> = {
+const InteractiveCanvas = (props: { graph: FlowGraph; width?: number; height?: number }) => {
+  const store = useMemo(() => {
+    const s = new GraphStore()
+    s.importGraph(props.graph)
+    return s
+  }, [])
+  return <FlowCanvas store={store} width={props.width} height={props.height} />
+}
+
+const meta: Meta<typeof InteractiveCanvas> = {
   title: 'Real Workflows',
-  component: FlowCanvas,
+  component: InteractiveCanvas,
   parameters: { layout: 'fullscreen' },
 }
 
 export default meta
-type Story = StoryObj<typeof FlowCanvas>
+type Story = StoryObj<typeof InteractiveCanvas>
 
 export const ModerationSystem: Story = {
   args: {

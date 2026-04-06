@@ -1,5 +1,7 @@
+import React, { useMemo } from 'react'
 import type { Meta, StoryObj } from '@storybook/react'
 import { FlowCanvas } from '../src/components/FlowCanvas'
+import { GraphStore } from '../src/model/GraphStore'
 import { defineNode } from '../src/define/defineNode'
 import type { FlowGraph } from '../src/types'
 
@@ -52,14 +54,23 @@ const graph: FlowGraph = {
   ],
 }
 
-const meta: Meta<typeof FlowCanvas> = {
+const InteractiveCanvas = (props: { graph: FlowGraph; width?: number; height?: number }) => {
+  const store = useMemo(() => {
+    const s = new GraphStore()
+    s.importGraph(props.graph)
+    return s
+  }, [])
+  return <FlowCanvas store={store} width={props.width} height={props.height} />
+}
+
+const meta: Meta<typeof InteractiveCanvas> = {
   title: 'defineNode API',
-  component: FlowCanvas,
+  component: InteractiveCanvas,
   parameters: { layout: 'fullscreen' },
 }
 
 export default meta
 
-export const FivemNodes: StoryObj<typeof FlowCanvas> = {
+export const FivemNodes: StoryObj<typeof InteractiveCanvas> = {
   args: { graph, width: 960, height: 380 },
 }
