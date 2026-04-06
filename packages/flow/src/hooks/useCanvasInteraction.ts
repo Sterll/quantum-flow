@@ -1,19 +1,49 @@
 import { useCallback, useRef } from 'react'
 import type { GraphStore } from '../model/GraphStore'
+import type { FlowNode, FlowPin, FlowWaypoint } from '../types'
 import { useViewport, type ViewportAPI } from './useViewport'
-import { useNodeDrag, type NodeDragAPI } from './useNodeDrag'
-import { useConnection, type ConnectionAPI } from './useConnection'
-import { useSelection, type SelectionAPI } from './useSelection'
+import { useNodeDrag, type NodeDragAPI, type AlignmentGuide } from './useNodeDrag'
+import { useConnection, type ConnectionAPI, type DraftConnection } from './useConnection'
+import { useSelection, type SelectionAPI, type Rect } from './useSelection'
 import { useHotkeys } from './useHotkeys'
-import { hitTestPin, hitTestNode, nodeHeight } from './hitTest'
+import { hitTestPin, hitTestNode, hitTestGroup, hitTestWaypoint, hitTestConnectionSegment, nodeHeight, GROUP_NODE_TYPE } from './hitTest'
+import { NODE_W, SLOT_H, PIN_Y0, BEZIER_MIN_OFFSET } from '../constants'
 
-const NODE_W = 220
 const ZOOM_FACTOR = 1.1
+
+export interface HoverPin {
+  nodeId: string
+  pinId: string
+  isOutput: boolean
+}
+
+export type ContextMenuTarget =
+  | { type: 'node'; nodeId: string; node: FlowNode }
+  | { type: 'pin'; nodeId: string; pinId: string; pin: FlowPin; isOutput: boolean }
+  | { type: 'canvas' }
+
+export interface ContextMenuEvent {
+  screenX: number
+  screenY: number
+  worldX: number
+  worldY: number
+  target: ContextMenuTarget
+}
 
 export interface CanvasInteractionOptions {
   readOnly?: boolean
   snapToGrid?: number
   onSelectionChange?: (ids: Set<string>) => void
+  onContextMenu?: (event: ContextMenuEvent) => void
+  snapToAlignment?: boolean
+  alignThreshold?: number
+  onGroup?: (nodeIds: string[]) => void
+  onSearchPalette?: () => void
+}
+
+export interface WaypointDragState {
+  connectionId: string
+  waypointId: string
 }
 
 export interface CanvasInteractionAPI {
@@ -22,6 +52,13 @@ export interface CanvasInteractionAPI {
   nodeDrag: NodeDragAPI
   connection: ConnectionAPI
   needsRedraw: React.MutableRefObject<boolean>
+  selectedRef: React.MutableRefObject<Set<string>>
+  draftRef: React.MutableRefObject<DraftConnection | null>
+  rubberBandRef: React.MutableRefObject<Rect | null>
+  hoveredNodeRef: React.MutableRefObject<string | null>
+  hoveredPinRef: React.MutableRefObject<HoverPin | null>
+  alignmentGuidesRef: React.MutableRefObject<AlignmentGuide[]>
+  selectedWaypointRef: React.MutableRefObject<string | null>
   attach(canvas: HTMLCanvasElement): () => void
 }
 
@@ -36,6 +73,8 @@ export function useCanvasInteraction(
   const nodeDrag = useNodeDrag(store, viewport, {
     selected: selection.selected,
     snapToGrid: options?.snapToGrid,
+    snapToAlignment: options?.snapToAlignment,
+    alignThreshold: options?.alignThreshold,
   })
   const connection = useConnection(store)
   const hotkeys = useHotkeys(store, {
@@ -43,6 +82,8 @@ export function useCanvasInteraction(
     clearSelection: selection.clear,
     selectAll: selection.selectAll,
     readOnly: options?.readOnly,
+    onGroup: options?.onGroup,
+    onSearchPalette: options?.onSearchPalette,
   })
 
   // Refs to track current state (avoid stale closures in event handlers)
@@ -55,7 +96,34 @@ export function useCanvasInteraction(
   const selectedRef = useRef(selection.selected)
   selectedRef.current = selection.selected
 
-  // Rubber-band drag state (not in a hook — local refs)
+  const rubberBandRef = useRef(selection.rubberBand)
+  rubberBandRef.current = selection.rubberBand
+
+  // Ref for nodeDrag API (startDrag has unstable deps on selected)
+  const nodeDragRef = useRef(nodeDrag)
+  nodeDragRef.current = nodeDrag
+
+  // Ref for readOnly option
+  const readOnlyRef = useRef(options?.readOnly)
+  readOnlyRef.current = options?.readOnly
+
+  // Ref for context menu callback
+  const contextMenuRef = useRef(options?.onContextMenu)
+  contextMenuRef.current = options?.onContextMenu
+
+  // Hover tracking
+  const hoveredNodeRef = useRef<string | null>(null)
+  const hoveredPinRef = useRef<HoverPin | null>(null)
+
+  // Waypoint drag state
+  const draggingWaypointRef = useRef<WaypointDragState | null>(null)
+  const selectedWaypointRef = useRef<string | null>(null)
+
+  // onGroup ref
+  const onGroupRef = useRef(options?.onGroup)
+  onGroupRef.current = options?.onGroup
+
+  // Rubber-band drag state (not in a hook - local refs)
   const rubberStart = useRef<{ x: number; y: number } | null>(null)
   const isPanning = useRef(false)
   const panStart = useRef({ x: 0, y: 0 })
@@ -73,10 +141,14 @@ export function useCanvasInteraction(
     }
 
     const onMouseDown = (e: MouseEvent) => {
-      if (options?.readOnly) return
+      hoveredNodeRef.current = null
+      hoveredPinRef.current = null
 
-      // Right-click → pan
+      if (readOnlyRef.current) return
+
+      // Right-click -> pan
       if (e.button === 2) {
+        e.preventDefault()
         isPanning.current = true
         panStart.current = { x: e.clientX, y: e.clientY }
         canvas.style.cursor = 'grabbing'
@@ -88,13 +160,62 @@ export function useCanvasInteraction(
 
       const { world } = getWorldPos(e)
       const nodes = store.getNodes()
+      const connections = store.getConnections()
 
-      // Check pins first
+      // Check waypoints first
+      const wpHit = hitTestWaypoint(world, connections)
+      if (wpHit) {
+        draggingWaypointRef.current = { connectionId: wpHit.connectionId, waypointId: wpHit.waypointId }
+        selectedWaypointRef.current = wpHit.waypointId
+        markDirty()
+        return
+      }
+
+      // Double-click on connection segment -> insert waypoint
+      if (e.detail >= 2) {
+        for (const conn of connections) {
+          const fn = nodes.find(n => n.id === conn.fromNodeId)
+          const tn = nodes.find(n => n.id === conn.toNodeId)
+          if (!fn || !tn) continue
+          const fpn = fn.outputs.find(p => p.id === conn.fromPinId)
+          const tpn = tn.inputs.find(p => p.id === conn.toPinId)
+          if (!fpn || !tpn) continue
+          const fp = { x: fn.position.x + (fn.width ?? NODE_W), y: fn.position.y + PIN_Y0 + fn.outputs.indexOf(fpn) * SLOT_H + SLOT_H * 0.5 }
+          const tp = { x: tn.position.x, y: tn.position.y + PIN_Y0 + tn.inputs.indexOf(tpn) * SLOT_H + SLOT_H * 0.5 }
+          if (hitTestConnectionSegment(world, fp, tp, conn.waypoints, 10)) {
+            const newWp: FlowWaypoint = { id: `wp_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`, x: world.x, y: world.y }
+            const existing = conn.waypoints ?? []
+            store.updateConnectionWaypoints(conn.id, [...existing, newWp])
+            selectedWaypointRef.current = newWp.id
+            markDirty()
+            return
+          }
+        }
+      }
+
+      // Clear waypoint selection
+      selectedWaypointRef.current = null
+
+      // Check pins
       const pinHit = hitTestPin(world, nodes)
       if (pinHit) {
         connection.startConnection(pinHit)
         markDirty()
         return
+      }
+
+      // Check groups (before regular nodes)
+      const groupHit = hitTestGroup(world, nodes)
+      if (groupHit && groupHit.isHeader) {
+        const group = store.getNode(groupHit.nodeId)
+        if (group) {
+          const childIds = (group.data.childIds as string[]) ?? []
+          selection.selectAll([groupHit.nodeId, ...childIds])
+          nodeDragRef.current.startDrag(groupHit.nodeId, world)
+          canvas.style.cursor = 'grabbing'
+          markDirty()
+          return
+        }
       }
 
       // Check nodes
@@ -105,13 +226,13 @@ export function useCanvasInteraction(
         } else if (!selectedRef.current.has(nodeHit.id)) {
           selection.select(nodeHit.id)
         }
-        nodeDrag.startDrag(nodeHit.id, world)
+        nodeDragRef.current.startDrag(nodeHit.id, world)
         canvas.style.cursor = 'grabbing'
         markDirty()
         return
       }
 
-      // Empty canvas click — start rubber-band or clear selection
+      // Empty canvas click - start rubber-band or clear selection
       if (!e.shiftKey) {
         selection.clear()
       }
@@ -132,9 +253,23 @@ export function useCanvasInteraction(
 
       const { world } = getWorldPos(e)
 
+      // Waypoint dragging
+      if (draggingWaypointRef.current) {
+        const { connectionId, waypointId } = draggingWaypointRef.current
+        const conn = store.getConnection(connectionId)
+        if (conn?.waypoints) {
+          const updated = conn.waypoints.map(wp =>
+            wp.id === waypointId ? { ...wp, x: world.x, y: world.y } : wp,
+          )
+          store.updateConnectionWaypoints(connectionId, updated)
+        }
+        markDirty()
+        return
+      }
+
       // Node dragging
       if (draggingRef.current) {
-        nodeDrag.moveDrag(world)
+        nodeDragRef.current.moveDrag(world)
         markDirty()
         return
       }
@@ -167,16 +302,27 @@ export function useCanvasInteraction(
         return
       }
 
-      // Hover cursor
-      if (options?.readOnly) return
+      // Hover tracking + cursor
       const nodes = store.getNodes()
       const pin = hitTestPin(world, nodes)
       if (pin) {
-        canvas.style.cursor = 'crosshair'
+        canvas.style.cursor = readOnlyRef.current ? 'default' : 'crosshair'
+        const prev = hoveredPinRef.current
+        if (!prev || prev.nodeId !== pin.nodeId || prev.pinId !== pin.pinId) {
+          hoveredPinRef.current = { nodeId: pin.nodeId, pinId: pin.pinId, isOutput: pin.isOutput }
+          hoveredNodeRef.current = pin.nodeId
+          markDirty()
+        }
         return
       }
       const node = hitTestNode(world, nodes)
-      canvas.style.cursor = node ? 'grab' : 'default'
+      const nodeId = node?.id ?? null
+      if (hoveredNodeRef.current !== nodeId || hoveredPinRef.current) {
+        hoveredNodeRef.current = nodeId
+        hoveredPinRef.current = null
+        markDirty()
+      }
+      canvas.style.cursor = readOnlyRef.current ? 'default' : (node ? 'grab' : 'default')
     }
 
     const onMouseUp = (e: MouseEvent) => {
@@ -188,9 +334,16 @@ export function useCanvasInteraction(
         return
       }
 
+      // End waypoint drag
+      if (draggingWaypointRef.current) {
+        draggingWaypointRef.current = null
+        markDirty()
+        return
+      }
+
       // End node drag
       if (draggingRef.current) {
-        nodeDrag.endDrag()
+        nodeDragRef.current.endDrag()
         canvas.style.cursor = 'grab'
         markDirty()
         return
@@ -232,14 +385,71 @@ export function useCanvasInteraction(
 
     const onContextMenu = (e: MouseEvent) => {
       e.preventDefault()
+
+      if (!contextMenuRef.current) return
+
+      const { world } = getWorldPos(e)
+      const nodes = store.getNodes()
+
+      const pinHit = hitTestPin(world, nodes)
+      let target: ContextMenuTarget
+
+      if (pinHit) {
+        const node = nodes.find(n => n.id === pinHit.nodeId)!
+        const pin = pinHit.isOutput
+          ? node.outputs.find(p => p.id === pinHit.pinId)!
+          : node.inputs.find(p => p.id === pinHit.pinId)!
+        target = { type: 'pin', nodeId: node.id, pinId: pin.id, pin, isOutput: pinHit.isOutput }
+      } else {
+        const nodeHit = hitTestNode(world, nodes)
+        if (nodeHit) {
+          target = { type: 'node', nodeId: nodeHit.id, node: nodeHit }
+        } else {
+          target = { type: 'canvas' }
+        }
+      }
+
+      contextMenuRef.current({
+        screenX: e.clientX,
+        screenY: e.clientY,
+        worldX: world.x,
+        worldY: world.y,
+        target,
+      })
+    }
+
+    const onMouseLeave = () => {
+      if (hoveredNodeRef.current || hoveredPinRef.current) {
+        hoveredNodeRef.current = null
+        hoveredPinRef.current = null
+        markDirty()
+      }
     }
 
     const onKeyDown = (e: KeyboardEvent) => {
+      // Delete selected waypoint
+      if ((e.key === 'Delete' || e.key === 'Backspace') && selectedWaypointRef.current) {
+        const wpId = selectedWaypointRef.current
+        for (const conn of store.getConnections()) {
+          if (!conn.waypoints) continue
+          const idx = conn.waypoints.findIndex(wp => wp.id === wpId)
+          if (idx >= 0) {
+            const updated = conn.waypoints.filter(wp => wp.id !== wpId)
+            store.updateConnectionWaypoints(conn.id, updated)
+            break
+          }
+        }
+        selectedWaypointRef.current = null
+        markDirty()
+        e.preventDefault()
+        return
+      }
+
       hotkeys.handleKeyDown(e)
       markDirty()
     }
 
-    /* ── Touch support ── */
+    /* -- Touch support -- */
 
     // Track pinch state for two-finger zoom
     const pinchState = { active: false, initialDist: 0, initialZoom: 1 }
@@ -249,7 +459,10 @@ export function useCanvasInteraction(
       Math.hypot(t2.clientX - t1.clientX, t2.clientY - t1.clientY)
 
     const onTouchStart = (e: TouchEvent) => {
-      if (options?.readOnly && e.touches.length === 1) return
+      hoveredNodeRef.current = null
+      hoveredPinRef.current = null
+
+      if (readOnlyRef.current && e.touches.length === 1) return
 
       // Two-finger pinch-zoom
       if (e.touches.length === 2) {
@@ -257,7 +470,6 @@ export function useCanvasInteraction(
         pinchState.active = true
         pinchState.initialDist = getTouchDist(e.touches[0], e.touches[1])
         pinchState.initialZoom = viewport.ref.current.zoom
-        // Also use two-finger for panning
         const midX = (e.touches[0].clientX + e.touches[1].clientX) / 2
         const midY = (e.touches[0].clientY + e.touches[1].clientY) / 2
         panStart.current = { x: midX, y: midY }
@@ -272,6 +484,16 @@ export function useCanvasInteraction(
       const { world } = getWorldPos(touch)
       const nodes = store.getNodes()
 
+      // Check waypoints
+      const connections = store.getConnections()
+      const wpHit = hitTestWaypoint(world, connections)
+      if (wpHit) {
+        draggingWaypointRef.current = { connectionId: wpHit.connectionId, waypointId: wpHit.waypointId }
+        selectedWaypointRef.current = wpHit.waypointId
+        markDirty()
+        return
+      }
+
       // Check pins
       const pinHit = hitTestPin(world, nodes)
       if (pinHit) {
@@ -280,18 +502,33 @@ export function useCanvasInteraction(
         return
       }
 
+      // Check group headers
+      const groupHit = hitTestGroup(world, nodes)
+      if (groupHit && groupHit.isHeader) {
+        const group = nodes.find(n => n.id === groupHit.nodeId)
+        if (group) {
+          const childIds = (group.data?.childIds as string[]) ?? []
+          const allIds = [groupHit.nodeId, ...childIds]
+          selection.selectAll(allIds)
+          nodeDragRef.current.startDrag(groupHit.nodeId, world)
+          markDirty()
+          return
+        }
+      }
+
       // Check nodes
       const nodeHit = hitTestNode(world, nodes)
       if (nodeHit) {
         if (!selectedRef.current.has(nodeHit.id)) {
           selection.select(nodeHit.id)
         }
-        nodeDrag.startDrag(nodeHit.id, world)
+        nodeDragRef.current.startDrag(nodeHit.id, world)
         markDirty()
         return
       }
 
       // Empty area - clear selection
+      selectedWaypointRef.current = null
       selection.clear()
       lastTouchPos.value = { x: touch.clientX, y: touch.clientY }
       isPanning.current = true
@@ -311,7 +548,6 @@ export function useCanvasInteraction(
         const midY = (e.touches[0].clientY + e.touches[1].clientY) / 2 - rect.top
         viewport.zoomAt(pinchState.initialZoom * scale, midX, midY)
 
-        // Pan with midpoint
         const currentMidX = (e.touches[0].clientX + e.touches[1].clientX) / 2
         const currentMidY = (e.touches[0].clientY + e.touches[1].clientY) / 2
         const dx = currentMidX - panStart.current.x
@@ -326,9 +562,23 @@ export function useCanvasInteraction(
       const touch = e.touches[0]
       const { world } = getWorldPos(touch)
 
+      // Waypoint dragging
+      if (draggingWaypointRef.current) {
+        const { connectionId, waypointId } = draggingWaypointRef.current
+        const conn = store.getConnection(connectionId)
+        if (conn?.waypoints) {
+          const updated = conn.waypoints.map(wp =>
+            wp.id === waypointId ? { ...wp, x: world.x, y: world.y } : wp,
+          )
+          store.updateConnectionWaypoints(connectionId, updated)
+        }
+        markDirty()
+        return
+      }
+
       // Node dragging
       if (draggingRef.current) {
-        nodeDrag.moveDrag(world)
+        nodeDragRef.current.moveDrag(world)
         markDirty()
         return
       }
@@ -364,9 +614,16 @@ export function useCanvasInteraction(
 
       if (e.touches.length > 0) return
 
+      // End waypoint drag
+      if (draggingWaypointRef.current) {
+        draggingWaypointRef.current = null
+        markDirty()
+        return
+      }
+
       // End node drag
       if (draggingRef.current) {
-        nodeDrag.endDrag()
+        nodeDragRef.current.endDrag()
         markDirty()
         return
       }
@@ -396,13 +653,14 @@ export function useCanvasInteraction(
       markDirty()
     }
 
-    /* ── Attach all listeners ── */
+    /* -- Attach all listeners -- */
 
     canvas.addEventListener('mousedown', onMouseDown)
-    canvas.addEventListener('mousemove', onMouseMove)
-    canvas.addEventListener('mouseup', onMouseUp)
+    window.addEventListener('mousemove', onMouseMove)
+    window.addEventListener('mouseup', onMouseUp)
     canvas.addEventListener('wheel', onWheel, { passive: false })
     canvas.addEventListener('contextmenu', onContextMenu)
+    canvas.addEventListener('mouseleave', onMouseLeave)
     canvas.setAttribute('tabindex', '0')
     canvas.addEventListener('keydown', onKeyDown)
     canvas.addEventListener('touchstart', onTouchStart, { passive: false })
@@ -411,16 +669,23 @@ export function useCanvasInteraction(
 
     return () => {
       canvas.removeEventListener('mousedown', onMouseDown)
-      canvas.removeEventListener('mousemove', onMouseMove)
-      canvas.removeEventListener('mouseup', onMouseUp)
+      window.removeEventListener('mousemove', onMouseMove)
+      window.removeEventListener('mouseup', onMouseUp)
       canvas.removeEventListener('wheel', onWheel)
       canvas.removeEventListener('contextmenu', onContextMenu)
+      canvas.removeEventListener('mouseleave', onMouseLeave)
       canvas.removeEventListener('keydown', onKeyDown)
       canvas.removeEventListener('touchstart', onTouchStart)
       canvas.removeEventListener('touchmove', onTouchMove)
       canvas.removeEventListener('touchend', onTouchEnd)
     }
-  }, [store, viewport, nodeDrag, connection, selection, hotkeys, options?.readOnly, markDirty])
+  }, [store, viewport, connection, selection, hotkeys, markDirty])
 
-  return { viewport, selection, nodeDrag, connection, needsRedraw, attach }
+  return {
+    viewport, selection, nodeDrag, connection, needsRedraw,
+    selectedRef, draftRef, rubberBandRef, hoveredNodeRef, hoveredPinRef,
+    alignmentGuidesRef: nodeDrag.alignmentGuides,
+    selectedWaypointRef,
+    attach,
+  }
 }
