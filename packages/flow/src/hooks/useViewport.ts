@@ -1,4 +1,7 @@
 import { useRef, useCallback } from 'react'
+import type { FlowNode } from '../types'
+import { nodeHeight } from './hitTest'
+import { NODE_W } from '../constants'
 
 export interface ViewportState {
   offset: { x: number; y: number }
@@ -14,6 +17,7 @@ export interface ViewportAPI {
   worldToScreen(wx: number, wy: number): { x: number; y: number }
   pan(dx: number, dy: number): void
   zoomAt(newZoom: number, screenX: number, screenY: number): void
+  fitView(nodes: FlowNode[], canvasWidth: number, canvasHeight: number, padding?: number): void
 }
 
 export function useViewport(): ViewportAPI {
@@ -57,5 +61,40 @@ export function useViewport(): ViewportAPI {
     }
   }, [])
 
-  return { ref, screenToWorld, worldToScreen, pan, zoomAt }
+  const fitView = useCallback((
+    nodes: FlowNode[],
+    canvasWidth: number,
+    canvasHeight: number,
+    padding = 60,
+  ) => {
+    if (nodes.length === 0) {
+      ref.current = { offset: { x: 0, y: 0 }, zoom: 1 }
+      return
+    }
+
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
+    for (const node of nodes) {
+      const w = node.width ?? NODE_W
+      const h = nodeHeight(node)
+      if (node.position.x < minX) minX = node.position.x
+      if (node.position.y < minY) minY = node.position.y
+      if (node.position.x + w > maxX) maxX = node.position.x + w
+      if (node.position.y + h > maxY) maxY = node.position.y + h
+    }
+
+    const worldW = maxX - minX
+    const worldH = maxY - minY
+    const zoom = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX,
+      Math.min((canvasWidth - padding * 2) / worldW, (canvasHeight - padding * 2) / worldH),
+    ))
+
+    const cx = (minX + maxX) / 2
+    const cy = (minY + maxY) / 2
+    ref.current = {
+      zoom,
+      offset: { x: canvasWidth / 2 - cx * zoom, y: canvasHeight / 2 - cy * zoom },
+    }
+  }, [])
+
+  return { ref, screenToWorld, worldToScreen, pan, zoomAt, fitView }
 }

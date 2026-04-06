@@ -6,6 +6,8 @@ export interface HotkeyOptions {
   clearSelection: () => void
   selectAll?: (nodeIds: string[]) => void
   readOnly?: boolean
+  onGroup?: (nodeIds: string[]) => void
+  onSearchPalette?: () => void
 }
 
 export interface HotkeysAPI {
@@ -36,6 +38,22 @@ export function useHotkeys(store: GraphStore, options: HotkeyOptions): HotkeysAP
       const allIds = store.getNodes().map(n => n.id)
       opts.selectAll?.(allIds)
       e.preventDefault()
+      return
+    }
+
+    if ((e.ctrlKey || e.metaKey) && e.key === 'g') {
+      if (opts.selected.size >= 2 && opts.onGroup) {
+        opts.onGroup(Array.from(opts.selected))
+        e.preventDefault()
+      }
+      return
+    }
+
+    if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+      if (opts.onSearchPalette) {
+        opts.onSearchPalette()
+        e.preventDefault()
+      }
       return
     }
   }, [store])
