@@ -26,7 +26,7 @@ export function createGroup(
   }
 
   const padding = 24
-  const id = `group_${crypto.randomUUID()}`
+  const id = `group_${typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`}`
   const group: FlowNode = {
     id,
     type: GROUP_NODE_TYPE,

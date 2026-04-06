@@ -727,6 +727,7 @@ export const FlowCanvas: React.FC<FlowCanvasProps> = ({
   const animateRef = useRef(animateConnections ?? false)
   animateRef.current = animateConnections ?? false
 
+  // SSR: hooks are always called but canvas effects are guarded inside useEffect
   const interaction = useCanvasInteraction(store, {
     readOnly,
     snapToGrid,
@@ -939,10 +940,23 @@ export const FlowCanvas: React.FC<FlowCanvasProps> = ({
     return interaction.viewport.screenToWorld(rect.width / 2, rect.height / 2)
   }
 
+  const nodeCount = store.getNodes().length
+  const connCount = store.getConnections().length
+
   // Always use wrapper div now (search palette / minimap need it)
   return (
-    <div style={{ position: 'relative', width: canvasStyle.width, height: canvasStyle.height }}>
-      <canvas ref={canvasRef} style={{ ...canvasStyle, width: '100%', height: '100%' }} />
+    <div
+      role="application"
+      aria-label={`Flow editor canvas with ${nodeCount} nodes and ${connCount} connections`}
+      aria-roledescription="node editor"
+      style={{ position: 'relative', width: canvasStyle.width, height: canvasStyle.height }}
+    >
+      <canvas
+        ref={canvasRef}
+        role="img"
+        aria-hidden="true"
+        style={{ ...canvasStyle, width: '100%', height: '100%' }}
+      />
       {registry && (
         <NodeOverlayLayer
           store={store}

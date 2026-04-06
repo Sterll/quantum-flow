@@ -81,9 +81,24 @@ export function useCanvasInteraction(
     selected: selection.selected,
     clearSelection: selection.clear,
     selectAll: selection.selectAll,
+    select: selection.select,
     readOnly: options?.readOnly,
     onGroup: options?.onGroup,
     onSearchPalette: options?.onSearchPalette,
+    onMoveSelected: (dx: number, dy: number) => {
+      store.batch(() => {
+        for (const nodeId of selection.selected) {
+          const node = store.getNode(nodeId)
+          if (node) {
+            store.moveNode(nodeId, {
+              x: node.position.x + dx,
+              y: node.position.y + dy,
+            })
+          }
+        }
+      })
+      needsRedraw.current = true
+    },
   })
 
   // Refs to track current state (avoid stale closures in event handlers)
