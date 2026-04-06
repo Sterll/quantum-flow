@@ -1,4 +1,4 @@
-import type { FlowNode, FlowConnection, FlowGraph, FlowNodePosition } from '../types'
+import type { FlowNode, FlowConnection, FlowGraph, FlowNodePosition, FlowWaypoint } from '../types'
 import { EventBus } from './EventBus'
 import type { Validator } from './Validator'
 
@@ -9,6 +9,7 @@ export interface GraphEvents {
   'node:dataChanged': { nodeId: string; data: Record<string, unknown> }
   'connection:added': { connection: FlowConnection }
   'connection:removed': { connectionId: string }
+  'connection:updated': { connection: FlowConnection }
   'graph:cleared': {}
   'graph:imported': { graph: FlowGraph }
   'batch:start': {}
@@ -46,11 +47,11 @@ export class GraphStore {
 
   getNode(id: string): FlowNode | undefined {
     const node = this.nodes.get(id)
-    return node ? { ...node } : undefined
+    return node ? this.cloneNode(node) : undefined
   }
 
   getNodes(): FlowNode[] {
-    return Array.from(this.nodes.values()).map(n => ({ ...n }))
+    return Array.from(this.nodes.values()).map(n => this.cloneNode(n))
   }
 
   getConnections(): FlowConnection[] {
@@ -126,6 +127,19 @@ export class GraphStore {
     this.emitEvent('connection:removed', { connectionId })
   }
 
+  getConnection(connectionId: string): FlowConnection | undefined {
+    const conn = this.connections.get(connectionId)
+    return conn ? { ...conn } : undefined
+  }
+
+  updateConnectionWaypoints(connectionId: string, waypoints: FlowWaypoint[]): void {
+    const conn = this.connections.get(connectionId)
+    if (!conn) return
+    const updated = { ...conn, waypoints: [...waypoints] }
+    this.connections.set(connectionId, updated)
+    this.emitEvent('connection:updated', { connection: { ...updated } })
+  }
+
   batch(fn: () => void): void {
     this.batching = true
     this.batchedEvents = []
@@ -172,6 +186,16 @@ export class GraphStore {
     })
     if (!result.valid) {
       throw new Error(result.reason)
+    }
+  }
+
+  private cloneNode(node: FlowNode): FlowNode {
+    return {
+      ...node,
+      position: { ...node.position },
+      inputs: node.inputs.map(p => ({ ...p })),
+      outputs: node.outputs.map(p => ({ ...p })),
+      data: node.data ? JSON.parse(JSON.stringify(node.data)) : undefined,
     }
   }
 
